@@ -1,0 +1,14 @@
+## Interface: 30300
+## Title: Wforged
+## Notes: Collects Worldforged item locations, stats, and vendor upgrade data.
+## Author: lkroc
+## Version: 0.1.0
+## SavedVariables: WforgedDB, WforgedLastImport
+
+Core.lua
+DB.lua
+ItemScan.lua
+VendorScan.lua
+Sync.lua
+SearchUI.lua
+Wforged.lua
