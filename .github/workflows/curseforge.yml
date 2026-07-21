@@ -1,0 +1,119 @@
+name: Release to CurseForge
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: Deploy even when package.json version already exists
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate addon and run unit tests
+        run: |
+          npm run check
+          npm run unit
+
+      - name: Build release archive
+        run: npm run build
+
+      - name: Read package version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether release is needed
+        id: release_check
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          FORCE_DEPLOY: ${{ inputs.force_deploy || false }}
+        run: |
+          release_tag="v${VERSION}"
+          if [ "${FORCE_DEPLOY}" = "true" ] || ! git tag --list "${release_tag}" | grep -q "^${release_tag}$"; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Release required for ${release_tag}."
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Release ${release_tag} already exists; skipping deploy."
+          fi
+
+      - name: Generate changelog
+        id: changelog
+        if: steps.release_check.outputs.should_release == 'true'
+        shell: bash
+        env:
+          RELEASE_TAG: v${{ steps.version.outputs.version }}
+        run: |
+          previous_tag="$(git tag --sort=-version:refname | grep -Fxv "$RELEASE_TAG" | head -n 1 || true)"
+          if [ -n "$previous_tag" ]; then
+            range="${previous_tag}..HEAD"
+          else
+            range="HEAD"
+          fi
+
+          {
+            echo "## Changes"
+            git log "$range" --pretty=format:'- %s (%h)' --no-merges
+          } > CHANGELOG_RELEASE.md
+
+          if [ ! -s CHANGELOG_RELEASE.md ] || [ "$(wc -l < CHANGELOG_RELEASE.md)" -eq 1 ]; then
+            echo "- Maintenance release" >> CHANGELOG_RELEASE.md
+          fi
+
+      - name: Create GitHub Release
+        if: steps.release_check.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: v${{ steps.version.outputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "Wforged $RELEASE_TAG" \
+              --notes-file CHANGELOG_RELEASE.md
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "Wforged $RELEASE_TAG" \
+              --notes-file CHANGELOG_RELEASE.md
+          fi
+
+      - name: Upload release to CurseForge
+        if: steps.release_check.outputs.should_release == 'true'
+        env:
+          CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
+          CURSEFORGE_PROJECT_ID: ${{ secrets.CURSEFORGE_PROJECT_ID }}
+          RELEASE_VERSION: v${{ steps.version.outputs.version }}
+        run: |
+          archive="dist/Wforged-$(node -p "require('./package.json').version").zip"
+          changelog="$(cat CHANGELOG_RELEASE.md)"
+          metadata="$(jq -cn \
+            --arg displayName "Wforged ${RELEASE_VERSION}" \
+            --arg changelog "$changelog" \
+            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown"}')"
+          curl --fail-with-body --retry 3 \
+            -X POST \
+            -H "x-api-token: ${CURSEFORGE_API_TOKEN}" \
+            -F "metadata=${metadata}" \
+            -F "file=@${archive}" \
+            "https://wow.curseforge.com/api/projects/${CURSEFORGE_PROJECT_ID}/upload-file"
