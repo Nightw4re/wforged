@@ -102,9 +102,22 @@ jobs:
         if: steps.release_check.outputs.should_release == 'true'
         env:
           CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
-          CURSEFORGE_PROJECT_ID: ${{ secrets.CURSEFORGE_PROJECT_ID }}
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID || secrets.CURSEFORGE_PROJECT_ID }}
           RELEASE_VERSION: v${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          if [ -z "${CURSEFORGE_API_TOKEN}" ]; then
+            echo "CURSEFORGE_API_TOKEN is missing. Add it under repository Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          if [ -z "${CURSEFORGE_PROJECT_ID}" ]; then
+            echo "CURSEFORGE_PROJECT_ID is missing. Add the numeric CurseForge project ID as a repository variable or secret."
+            exit 1
+          fi
+          if ! [[ "${CURSEFORGE_PROJECT_ID}" =~ ^[0-9]+$ ]]; then
+            echo "CURSEFORGE_PROJECT_ID must be numeric, got: ${CURSEFORGE_PROJECT_ID}"
+            exit 1
+          fi
           archive="dist/Wforged-$(node -p "require('./package.json').version").zip"
           changelog="$(cat CHANGELOG_RELEASE.md)"
           metadata="$(jq -cn \
