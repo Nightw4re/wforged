@@ -17,8 +17,11 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      should_release: ${{ steps.release_check.outputs.should_release }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -82,28 +85,55 @@ jobs:
             echo "- Maintenance release" >> CHANGELOG_RELEASE.md
           fi
 
-      - name: Create GitHub Release
+      - name: Upload build artifact
         if: steps.release_check.outputs.should_release == 'true'
+        run: |
+          mkdir -p release
+          cp "dist/Wforged-${{ steps.version.outputs.version }}.zip" release/
+          cp CHANGELOG_RELEASE.md release/
+
+      - name: Store build artifact
+        if: steps.release_check.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wforged-release
+          path: release/
+
+  upload:
+    needs: build
+    if: needs.build.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wforged-release
+          path: release
+
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: v${{ steps.version.outputs.version }}
+          RELEASE_TAG: v${{ needs.build.outputs.version }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
               --title "Wforged $RELEASE_TAG" \
-              --notes-file CHANGELOG_RELEASE.md
+              --notes-file release/CHANGELOG_RELEASE.md
+            gh release upload "$RELEASE_TAG" \
+              "release/Wforged-${{ needs.build.outputs.version }}.zip" \
+              --clobber
           else
             gh release create "$RELEASE_TAG" \
               --title "Wforged $RELEASE_TAG" \
-              --notes-file CHANGELOG_RELEASE.md
+              --notes-file release/CHANGELOG_RELEASE.md \
+              release/Wforged-${{ needs.build.outputs.version }}.zip
           fi
 
       - name: Upload release to CurseForge
-        if: steps.release_check.outputs.should_release == 'true'
         env:
           CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
           CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID || secrets.CURSEFORGE_PROJECT_ID }}
-          RELEASE_VERSION: v${{ steps.version.outputs.version }}
+          RELEASE_VERSION: v${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
           if [ -z "${CURSEFORGE_API_TOKEN}" ]; then
@@ -118,12 +148,12 @@ jobs:
             echo "CURSEFORGE_PROJECT_ID must be numeric, got: ${CURSEFORGE_PROJECT_ID}"
             exit 1
           fi
-          archive="dist/Wforged-$(node -p "require('./package.json').version").zip"
-          changelog="$(cat CHANGELOG_RELEASE.md)"
+          archive="release/Wforged-${{ needs.build.outputs.version }}.zip"
+          changelog="$(cat release/CHANGELOG_RELEASE.md)"
           metadata="$(jq -cn \
             --arg displayName "Wforged ${RELEASE_VERSION}" \
             --arg changelog "$changelog" \
-            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown", releaseType: "release"}')"
+            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown", releaseType: "release", gameVersions: ["3.3.5"]}')"
           curl --fail-with-body --retry 3 \
             -X POST \
             -H "x-api-token: ${CURSEFORGE_API_TOKEN}" \
