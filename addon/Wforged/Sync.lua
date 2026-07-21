@@ -346,6 +346,9 @@ function Sync:MergeRemoteItem(payload)
     payload.itemKey = itemKey
     payload.fingerprint = fingerprint
     local stored = addon.DB:RecordItemObservation(payload)
+    if addon.ItemScan and addon.ItemScan.RepairStoredItems then
+      addon.ItemScan:RepairStoredItems(payload.itemId)
+    end
     addon:LootDebug(string.format("Import stored: id=%s name=%s map=%s x=%s y=%s quality=%s level=%s", tostring(payload.itemId), tostring(stored and stored.itemName or payload.itemName), tostring(stored and stored.lastMapId), tostring(stored and stored.lastX), tostring(stored and stored.lastY), tostring(stored and stored.quality), tostring(stored and stored.itemLevel)))
     return true
   end

@@ -813,11 +813,6 @@ function addon.AutoConfirm:TryNonStaticPopupConfirm()
     return true
   end
 
-  if tryNamedButton("LootFrame", "OkayButton") then
-    addon:LootDebug("Auto-confirm via LootFrameOkayButton")
-    return true
-  end
-
   return false
 end
 

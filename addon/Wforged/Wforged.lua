@@ -124,6 +124,11 @@ registerEvent("PLAYER_LOGIN", function(self)
   else
     self:LootDebug("AutoConfirm module missing.")
   end
+  if C_Timer and C_Timer.After and self.ItemScan and self.ItemScan.RepairStoredItems then
+    C_Timer.After(5, function()
+      self.ItemScan:RepairStoredItems()
+    end)
+  end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
     frame.elapsed = (frame.elapsed or 0) + elapsed
     frame.vendorElapsed = (frame.vendorElapsed or 0) + elapsed
@@ -209,6 +214,9 @@ end)
 
 registerEvent("GET_ITEM_INFO_RECEIVED", function(self, itemId)
   self.ItemScan:RetryPendingItems(itemId)
+  if self.ItemScan.RepairStoredItems then
+    self.ItemScan:RepairStoredItems(itemId)
+  end
   if self.Sync and self.Sync.RefreshItemInfo then
     self.Sync:RefreshItemInfo(itemId)
   end
