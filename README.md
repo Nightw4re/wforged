@@ -16,6 +16,13 @@ Wforged collects Worldforged item locations and item information in World of War
 - Automatically confirms the bind dialog only for confirmed Worldforged items.
 - Keeps data account-wide across characters.
 - Supports compact import/export and optional guild broadcast/receive.
+
+## Updates
+
+Use `/wforged update` to display the installed version and the official CurseForge page:
+https://www.curseforge.com/wow/addons/wforged
+
+The addon cannot query CurseForge directly from the game client, so the page is the authoritative source for the latest release.
 - Works with or without ElvUI.
 
 ## Installation
@@ -97,3 +104,14 @@ Enable `Send guild updates` to broadcast newly looted Worldforged items. Enable 
 ## Development
 
 Technical project notes, data model details, sync format, and test information are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## CurseForge releases
+
+Push to `main` or `master` after updating the version in `package.json`. The `Release to CurseForge` workflow creates the matching GitHub Release, generates its changelog from commits, builds the ZIP, and uploads it automatically.
+
+To redeploy the same version, run the workflow manually from GitHub Actions and enable `force_deploy`.
+
+Configure these repository secrets before using the workflow:
+
+- `CURSEFORGE_API_TOKEN`
+- `CURSEFORGE_PROJECT_ID`

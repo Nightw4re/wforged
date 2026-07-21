@@ -10,7 +10,7 @@ Wforged is a beta Worldforged data collection addon for World of Warcraft. The a
 - `npm run unit` runs the Node.js regression tests.
 - `npm run deploy` copies the addon to the configured local game client.
 - `npm test` runs check, unit tests, and deploy in that order.
-- `npm run build` creates `dist/Wforged-1.0.0.zip`.
+- `npm run build` creates a versioned ZIP in `dist/`.
 
 The deployment target is configured locally by the deployment script.
 
