@@ -123,7 +123,7 @@ jobs:
           metadata="$(jq -cn \
             --arg displayName "Wforged ${RELEASE_VERSION}" \
             --arg changelog "$changelog" \
-            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown"}')"
+            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown", releaseType: "release"}')"
           curl --fail-with-body --retry 3 \
             -X POST \
             -H "x-api-token: ${CURSEFORGE_API_TOKEN}" \
