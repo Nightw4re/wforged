@@ -722,7 +722,6 @@ function addon.AutoConfirm:RequestDebugScan(reason)
 end
 
 function addon.AutoConfirm:SetLootContext(hasWorldforged)
-  local settings = addon.DB and addon.DB.GetSettings and addon.DB:GetSettings()
   self.hasWorldforgedLoot = hasWorldforged and true or false
   if self.hasWorldforgedLoot then
     self:RequestDebugScan("worldforged-loot-opened")
@@ -823,6 +822,10 @@ function addon.AutoConfirm:TryNonStaticPopupConfirm()
 end
 
 function addon.AutoConfirm:TryConfirm()
+  if not self.lootWindowOpen then
+    return false
+  end
+
   local sawPopup = false
   if self.lootScanUntil and GetTime() <= self.lootScanUntil and not self.hasWorldforgedLoot then
     self:ScanOpenLootSlots()

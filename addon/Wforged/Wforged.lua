@@ -158,7 +158,7 @@ end)
 
 registerEvent("CHAT_MSG_LOOT", function(self, message)
   local foundWorldforged = self.ItemScan:CaptureLootMessage(message)
-  if foundWorldforged and self.AutoConfirm and self.AutoConfirm.SetLootContext then
+  if foundWorldforged and self.AutoConfirm and self.AutoConfirm.lootWindowOpen and self.AutoConfirm.SetLootContext then
     self.AutoConfirm:SetLootContext(true)
     self.AutoConfirm:TryConfirm()
   end
@@ -167,6 +167,7 @@ end)
 registerEvent("LOOT_OPENED", function(self)
   self:LootDebug("LOOT_OPENED fired.")
   if self.AutoConfirm then
+    self.AutoConfirm.lootWindowOpen = true
     self.AutoConfirm.hasWorldforgedLoot = false
     self.AutoConfirm.lastSeenPopupKey = nil
     self.AutoConfirm.lootScanUntil = GetTime() + 2
@@ -195,6 +196,12 @@ end)
 
 registerEvent("LOOT_CLOSED", function(self)
   self:LootDebug("LOOT_CLOSED fired.")
+  if self.AutoConfirm then
+    self.AutoConfirm.lootWindowOpen = false
+    self.AutoConfirm.hasWorldforgedLoot = false
+    self.AutoConfirm.lootScanUntil = nil
+    self.AutoConfirm.lastSeenPopupKey = nil
+  end
   if self.AutoConfirm and self.AutoConfirm.SetLootContext then
     self.AutoConfirm:SetLootContext(false)
   end
