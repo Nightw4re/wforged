@@ -68,9 +68,9 @@ jobs:
         run: |
           previous_tag="$(git tag --sort=-version:refname | grep -Fxv "$RELEASE_TAG" | head -n 1 || true)"
           if [ -n "$previous_tag" ]; then
-            range="${previous_tag}..${RELEASE_TAG}"
+            range="${previous_tag}..HEAD"
           else
-            range="$RELEASE_TAG"
+            range="HEAD"
           fi
 
           {
