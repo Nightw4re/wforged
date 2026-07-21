@@ -16,11 +16,20 @@ if (!fs.existsSync(path.join(addonSourceDir, `${addonName}.toc`))) {
 
 fs.mkdirSync(distDir, { recursive: true });
 
-const command = [
-  "$ErrorActionPreference = 'Stop'",
-  `Compress-Archive -LiteralPath '${addonSourceDir.replace(/'/g, "''")}' -DestinationPath '${archivePath.replace(/'/g, "''")}' -Force`,
-].join("; ");
-const result = spawnSync("powershell", ["-NoProfile", "-Command", command], { stdio: "inherit" });
+let result;
+if (process.platform === "win32") {
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    `Compress-Archive -LiteralPath '${addonSourceDir.replace(/'/g, "''")}' -DestinationPath '${archivePath.replace(/'/g, "''")}' -Force`,
+  ].join("; ");
+  result = spawnSync("powershell", ["-NoProfile", "-Command", command], { stdio: "inherit" });
+} else {
+  // GitHub-hosted Linux runners provide zip, while PowerShell is Windows-only.
+  result = spawnSync("zip", ["-qr", archivePath, addonName], {
+    cwd: path.join(repoRoot, "addon"),
+    stdio: "inherit",
+  });
+}
 
 if (result.status !== 0) {
   process.exit(result.status || 1);
