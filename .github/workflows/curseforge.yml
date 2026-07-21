@@ -78,7 +78,16 @@ jobs:
 
           {
             echo "## Changes"
-            git log "$range" --pretty=format:'- %s (%h)' --no-merges
+            git log "$range" --pretty=format:'%s (%h)' --no-merges | while IFS= read -r commit; do
+              case "$commit" in
+                "fix(release):"*|"fix(build):"*|"feat(release):"*|"docs("*|"chore("*)
+                  continue
+                  ;;
+                *)
+                  echo "- $commit"
+                  ;;
+              esac
+            done
           } > CHANGELOG_RELEASE.md
 
           if [ ! -s CHANGELOG_RELEASE.md ] || [ "$(wc -l < CHANGELOG_RELEASE.md)" -eq 1 ]; then
