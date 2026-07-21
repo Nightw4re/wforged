@@ -4,6 +4,7 @@
   "description": "Beta World of Warcraft addon for collecting and sharing Worldforged item data.",
   "private": true,
   "scripts": {
+    "prebuild": "node scripts/sync-version.js",
     "unit": "node --test test/*.test.js",
     "test": "npm run check && npm run unit && npm run deploy",
     "deploy": "node scripts/deploy-addon.js",
