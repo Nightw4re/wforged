@@ -4,7 +4,7 @@ addon = addon or {}
 _G[addonName] = addon
 
 addon.name = addonName
-addon.version = "0.1.0"
+addon.version = "1.0.1"
 addon.debug = false
 addon.AutoConfirm = addon.AutoConfirm or {}
 addon.MinimapButton = addon.MinimapButton or {}
@@ -218,6 +218,11 @@ local function ensureMapPin()
   pin:SetScript("OnLeave", function()
     GameTooltip:Hide()
   end)
+  pin:SetScript("OnClick", function(self, button)
+    if button == "LeftButton" and addon.SearchUI and addon.SearchUI.ShareResult then
+      addon.SearchUI:ShareResult(self.result)
+    end
+  end)
 
   pin:Hide()
   addon.MapNotes.pin = pin
@@ -406,6 +411,11 @@ function addon.MapNotes:RefreshAllMarkers()
           end
         end)
         marker:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        marker:SetScript("OnClick", function(button, mouseButton)
+          if mouseButton == "LeftButton" and addon.SearchUI and addon.SearchUI.ShareResult then
+            addon.SearchUI:ShareResult(button.result)
+          end
+        end)
         self.allMarkers[key] = marker
       end
       marker:SetParent(WorldMapDetailFrame)
@@ -630,22 +640,19 @@ function addon.MinimapButton:Create()
   button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   button:RegisterForDrag("LeftButton")
 
-  button.texture = button:CreateTexture(nil, "BACKGROUND")
-  button.texture:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
-  button.texture:SetWidth(54)
-  button.texture:SetHeight(54)
-  button.texture:SetPoint("TOPLEFT", -11, 11)
+  button.border = button:CreateTexture(nil, "OVERLAY")
+  button.border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+  button.border:SetWidth(54)
+  button.border:SetHeight(54)
+  button.border:SetPoint("CENTER", 12, -12)
 
   button.icon = button:CreateTexture(nil, "ARTWORK")
-  button.icon:SetTexture("Interface\\Icons\\INV_Misc_Spyglass_03")
+  button.icon:SetTexture("Interface\\Icons\\INV_Sword_04")
   button.icon:SetWidth(18)
   button.icon:SetHeight(18)
   button.icon:SetPoint("CENTER", 0, 1)
+  button.icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)
 
-  button.highlight = button:CreateTexture(nil, "HIGHLIGHT")
-  button.highlight:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
-  button.highlight:SetBlendMode("ADD")
-  button.highlight:SetAllPoints(button)
 
   button:SetScript("OnClick", function(_, mouseButton)
     if mouseButton == "RightButton" and addon.SearchUI and addon.SearchUI.ToggleSettings then
@@ -700,6 +707,12 @@ local function popupTextMatches(text)
     end
   end
   return false
+end
+
+local function isLootBindPopup(text)
+  local normalized = string.lower(text or "")
+  return normalized:find("looting ", 1, true) ~= nil
+    and normalized:find("bind", 1, true) ~= nil
 end
 
 function addon.AutoConfirm:RequestDebugScan(reason)
@@ -842,7 +855,7 @@ function addon.AutoConfirm:TryConfirm()
         self.lastSeenPopupKey = popupKey
         addon:LootDebug("Visible popup: " .. tostring(text))
       end
-      if popupTextMatches(text) or self.hasWorldforgedLoot then
+      if self.hasWorldforgedLoot and isLootBindPopup(text) then
         local button1 = _G[popup:GetName() .. "Button1"]
         if button1 and button1:IsShown() and button1:IsEnabled() then
           addon:LootDebug("Auto-confirm popup: " .. tostring(text))

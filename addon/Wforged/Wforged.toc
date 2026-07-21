@@ -2,7 +2,7 @@
 ## Title: Wforged
 ## Notes: Collects Worldforged item locations, stats, and vendor upgrade data.
 ## Author: lkroc
-## Version: 0.1.0
+## Version: 1.0.1
 ## SavedVariables: WforgedDB, WforgedLastImport
 
 Core.lua

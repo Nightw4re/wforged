@@ -156,6 +156,10 @@ end
 
 function Sync:Import(textValue)
   if type(textValue) ~= "string" then return 0, "invalid format" end
+  textValue = textValue:gsub("^%s+", ""):gsub("%s+$", "")
+  if textValue:sub(1, 5) == "WFG6|" then
+    textValue = "WFGDB6;" .. textValue
+  end
   if textValue:sub(1, 6) ~= "WFGDB6" then
     if textValue:sub(1, 5) == "WFGDB" then
       return 0, "unsupported export version; generate a new WFGDB6 export"

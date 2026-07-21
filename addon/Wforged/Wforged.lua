@@ -1,5 +1,7 @@
 local addonName, addon = ...
 
+addon.curseForgeURL = "https://www.curseforge.com/wow/addons/wforged"
+
 function addon:ResetDatabase()
   WforgedDB = {}
   self.DB:Init()
@@ -58,6 +60,12 @@ local function handleSlashCommand(message)
   if command == "debug" then
     addon.debug = not addon.debug
     addon:Print("Debug mode: " .. (addon.debug and "on" or "off"))
+    return
+  end
+
+  if command == "update" or command == "check" or command == "checkupdate" then
+    addon:Print("Installed version: " .. tostring(addon.version or "unknown"))
+    addon:Print("Check CurseForge for the latest release: " .. addon.curseForgeURL)
     return
   end
 

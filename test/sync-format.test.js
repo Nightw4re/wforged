@@ -132,3 +132,11 @@ test('show all hides markers from another map', () => {
   const record = decodeRecord(parseImport(realExport).find((item) => item[1] === '450748'));
   assert.equal(shouldShowAllMarker({ x: record.x, y: record.y, mapId: record.mapId, zoneName: 'Westfall' }, 35, 'Duskwood'), false);
 });
+
+test('accepts raw WFG6 records copied without the WFGDB6 header', () => {
+  const raw = 'WFG6|450563|15|0.409|0.8196|1784288965;WFG6|450564|40|0.4137|0.6647|1784288965';
+  const records = parseImport(`WFGDB6;${raw}`);
+  assert.equal(records.length, 2);
+  assert.equal(records[0][1], '450563');
+  assert.equal(records[1][1], '450564');
+});

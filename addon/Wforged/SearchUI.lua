@@ -106,29 +106,66 @@ local function getQualityColorCode(quality)
   return "|cffffffff"
 end
 
-local function openChatWithText(text)
+local function openChatWithText(text, itemLink, prefix, suffix)
   if not text or text == "" then
     return
   end
 
-  local editBox = ChatFrameEditBox
+  if SearchUI.frame and SearchUI.frame.editBox then
+    SearchUI.frame.editBox:ClearFocus()
+  end
+
+  local editBox = ChatFrame1EditBox or ChatFrameEditBox
   if ChatEdit_ChooseBoxForSend then
-    editBox = ChatEdit_ChooseBoxForSend() or editBox
+    local chosen = ChatEdit_ChooseBoxForSend()
+    if chosen and chosen.IsVisible and chosen:IsVisible() then
+      editBox = chosen
+    end
   end
   if ChatEdit_ActivateChat then
     ChatEdit_ActivateChat(editBox)
   elseif editBox and editBox.Show then
     editBox:Show()
-    editBox:SetFocus()
   end
 
   if editBox and editBox.SetText then
-    editBox:SetText(text)
-    if editBox.HighlightText then
-      editBox:HighlightText(0, 0)
+    if editBox.Show then editBox:Show() end
+    if editBox.SetFocus then editBox:SetFocus() end
+    local insertedLink = false
+    if itemLink and itemLink:find("|Hitem:", 1, true) and ChatEdit_InsertLink then
+      if ChatEdit_ActivateChat then
+        ChatEdit_ActivateChat(editBox)
+      end
+      if ChatEdit_GetActiveWindow then
+        local activeBox = ChatEdit_GetActiveWindow()
+        if activeBox then
+          editBox = activeBox
+        end
+      end
+      if prefix and editBox.Insert then
+        editBox:Insert(prefix)
+      end
+      -- The legacy client inserts the link but does not return a boolean.
+      ChatEdit_InsertLink(itemLink)
+      insertedLink = true
+      if suffix and editBox.Insert then
+        editBox:Insert(suffix)
+      end
+    end
+    if not insertedLink then
+      editBox:SetText(text)
     end
     if editBox.SetCursorPosition then
-      editBox:SetCursorPosition(string.len(text))
+      editBox:SetCursorPosition(string.len(insertedLink and text or text))
+    end
+    if editBox.SetFocus then editBox:SetFocus() end
+    if addon.LootDebug then
+      addon:LootDebug(string.format(
+        "Share chat: box=%s linkInserted=%s textLength=%d",
+        tostring(editBox.GetName and editBox:GetName() or "unknown"),
+        tostring(insertedLink),
+        string.len(text)
+      ))
     end
   end
 end
@@ -139,6 +176,12 @@ local function buildChatItemLink(result)
   end
 
   local itemLink = result.itemLink or result.itemName or "item"
+  if GetItemInfo and result.itemId then
+    local _, canonicalLink = GetItemInfo(result.itemId)
+    if canonicalLink and canonicalLink:find("|Hitem:", 1, true) then
+      itemLink = canonicalLink
+    end
+  end
   if not itemLink:find("|Hitem:", 1, true) then
     return itemLink
   end
@@ -178,7 +221,20 @@ local function buildShareText(result)
   end
 
   local locationText = #locationParts > 0 and table.concat(locationParts, " @ ") or "location unknown"
-  return string.format("%s - %s", buildChatItemLink(result), locationText)
+  return string.format("Wforged Addon: %s - %s", buildChatItemLink(result), locationText)
+end
+
+function SearchUI:ShareResult(result)
+  if result then
+    local text = buildShareText(result)
+    local itemLink = buildChatItemLink(result)
+    local linkStart = text:find(itemLink, 1, true)
+    if linkStart and itemLink:find("|Hitem:", 1, true) then
+      openChatWithText(text, itemLink, text:sub(1, linkStart - 1), text:sub(linkStart + #itemLink))
+      return
+    end
+    openChatWithText(text)
+  end
 end
 
 local function hasUsableLocation(result)

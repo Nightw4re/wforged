@@ -733,6 +733,7 @@ function DB:SearchItems(query, filters)
           results[#results + 1] = {
             itemKey = itemKey,
             fingerprint = fingerprint,
+            itemId = entry.itemId or bucket.itemId,
             itemName = bucket.itemName or entry.itemName or "Unknown",
             itemLink = entry.itemLink,
             itemTexture = entry.itemTexture,
