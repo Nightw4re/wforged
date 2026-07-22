@@ -682,10 +682,14 @@ function DB:SearchItems(query, filters)
 
   for itemKey, bucket in pairs(self.data.itemsByKey) do
     local fingerprint = self:GetPreferredFingerprint(itemKey, bucket)
-    local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
+      local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
     if entry then
+      local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
+        entry.lastMapId, entry.lastContinent, entry.lastZone, entry.lastZoneName
+      ) or entry.lastZoneName
       local haystack = string.lower(table.concat({
         bucket.itemName or "",
+        zoneName or "",
         entry.statsText or "",
         entry.tooltipText or "",
         tostring(entry.itemLevel or ""),

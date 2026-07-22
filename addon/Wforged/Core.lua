@@ -138,14 +138,26 @@ function addon:ResolveZoneName(mapId, continent, zone, zoneName)
     end
   end
 
-  if mapId and GetMapInfo then
-    local ok, resolved = pcall(GetMapInfo, mapId)
-    if ok and resolved and resolved ~= "" and not tostring(resolved):match("^Map %d+$") then
-      return resolved
-    end
-  end
-
   return nil
+end
+
+function addon:DebugOpenMapZone()
+  local mapId = GetCurrentMapAreaID and GetCurrentMapAreaID() or nil
+  local continent = GetCurrentMapContinent and GetCurrentMapContinent() or nil
+  local zone = GetCurrentMapZone and GetCurrentMapZone() or nil
+  local mapName = GetMapInfo and GetMapInfo() or nil
+  local zonesName = nil
+  if continent and zone and GetMapZones then
+    local zones = { GetMapZones(continent) }
+    zonesName = zones[zone]
+  end
+  self:Print(string.format(
+    "Open map zone: mapId=%s map=%s real=%s zone=%s continent=%s zoneIndex=%s indexedName=%s",
+    tostring(mapId), tostring(mapName or "?"),
+    tostring(GetRealZoneText and GetRealZoneText() or "?"),
+    tostring(GetZoneText and GetZoneText() or "?"), tostring(continent or "?"),
+    tostring(zone or "?"), tostring(zonesName or "?")
+  ))
 end
 
 local function ensureMapPin()
@@ -322,10 +334,6 @@ local function isViewingTargetZone(result)
     local zone = GetCurrentMapZone()
     if continent and zone and continent > 0 and zone > 0 and result.lastContinent and result.lastZone then
       return continent == result.lastContinent and zone == result.lastZone
-    end
-
-    if continent and zone == 0 and result.lastContinent and continent == result.lastContinent then
-      return true
     end
 
     if continent and zone and continent > 0 and zone > 0 and result.lastZoneName and GetMapZones then

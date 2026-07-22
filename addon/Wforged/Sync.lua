@@ -169,6 +169,16 @@ function Sync:Export()
   return table.concat(parts, ";")
 end
 
+local function makeBroadcastPayload(entry)
+  local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
+  if not entry.itemId or not mapId or not x or not y then
+    return nil
+  end
+  local realm = encode(entry.realm or "Unknown")
+  local item = string.format("%d:%d", entry.itemId, tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0)
+  return table.concat({ "WFGDB7", realm, mapId, x, y, item }, "|")
+end
+
 function Sync:Import(textValue)
   if type(textValue) ~= "string" then return 0, "invalid format" end
   textValue = textValue:gsub("^%s+", ""):gsub("%s+$", "")
@@ -292,7 +302,11 @@ function Sync:BroadcastItem(fingerprint)
     addon:LootDebug("Guild broadcast skipped: item record is unavailable.")
     return false
   end
-  local payload = makeItemPayload(entry)
+  local payload = makeBroadcastPayload(entry)
+  if not payload then
+    addon:LootDebug("Guild broadcast skipped: item has no usable location.")
+    return false
+  end
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
     C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
   elseif SendAddonMessage then
@@ -310,7 +324,7 @@ function Sync:BroadcastTestItem()
     addon:LootDebug("Test broadcast skipped: sending is disabled.")
     return false
   end
-  local payload = "WFG6|450559|40|0.7154|0.7379|" .. tostring(time())
+  local payload = "WFGDB7|Unknown|40|0.7154|0.7379|450559:" .. tostring(time())
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
     C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
   elseif SendAddonMessage then
@@ -339,7 +353,10 @@ function Sync:OnAddonMessage(prefix, message, channel, sender)
     return
   end
 
-  if message and message:sub(1, 5) == "WFG6|" then
+  if message and message:sub(1, 7) == "WFGDB7|" then
+    self:Import(message)
+    addon:LootDebug("Guild payload queued as WFGDB7.")
+  elseif message and message:sub(1, 5) == "WFG6|" then
     local fields = splitPayload(message)
     local payload = decodePayload(fields)
     addon:LootDebug(string.format("Guild payload decoded: id=%s map=%s x=%s y=%s time=%s", tostring(payload and payload.itemId), tostring(payload and payload.mapId), tostring(payload and payload.x), tostring(payload and payload.y), tostring(payload and payload.observedAt)))

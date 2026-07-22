@@ -2,6 +2,7 @@ local addonName, addon = ...
 
 local ItemScan = {}
 addon.ItemScan = ItemScan
+ItemScan.zoneRepairDryRun = true
 
 local tooltip = CreateFrame("GameTooltip", "WforgedScanTooltip", nil, "GameTooltipTemplate")
 tooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
@@ -222,17 +223,57 @@ local function isGenericZoneName(name)
   return type(name) == "string" and name:match("^Map %d+$") ~= nil
 end
 
+local function isCurrentMapNameForDifferentMap(record)
+  local recordMapId = record and (record.mapId or record.lastMapId)
+  local recordZoneName = record and (record.zoneName or record.lastZoneName)
+  if not record or not recordZoneName or not GetMapInfo or not GetCurrentMapAreaID then
+    return false
+  end
+  local currentMapId = GetCurrentMapAreaID()
+  local currentMapName = GetMapInfo()
+  return currentMapId and recordMapId and tonumber(recordMapId) ~= tonumber(currentMapId)
+    and currentMapName and recordZoneName == currentMapName
+end
+
+local function logZoneNameCandidates(mapId, continent, zone)
+  local candidates = {
+    real = GetRealZoneText and GetRealZoneText() or nil,
+    zone = GetZoneText and GetZoneText() or nil,
+    map = GetMapInfo and GetMapInfo() or nil,
+  }
+  if continent and zone and GetMapZones then
+    local zones = { GetMapZones(continent) }
+    candidates.index = zones[zone]
+  end
+  addon:LootDebug(string.format(
+    "Zone candidates: mapId=%s real=%s zone=%s map=%s index=%s",
+    tostring(mapId), tostring(candidates.real or "?"), tostring(candidates.zone or "?"),
+    tostring(candidates.map or "?"), tostring(candidates.index or "?")
+  ))
+end
+
 function ItemScan:RepairStoredItem(itemId, entry)
   if not itemId or not entry then
     return false
   end
 
   local repairedZone = false
-  if isGenericZoneName(entry.lastZoneName) and addon.ResolveZoneName then
+  if isCurrentMapNameForDifferentMap({ mapId = entry.lastMapId, zoneName = entry.lastZoneName }) then
+    local oldZone = entry.lastZoneName
+    addon:LootDebug(string.format("Zone repair preview: itemId=%s %s -> unknown (current map name did not match mapId)", tostring(entry.itemId), tostring(oldZone)))
+    if not self.zoneRepairDryRun then
+      entry.lastZoneName = nil
+      repairedZone = true
+    end
+  elseif isGenericZoneName(entry.lastZoneName) and addon.ResolveZoneName then
+    local oldZone = entry.lastZoneName
     local resolvedZone = addon:ResolveZoneName(entry.lastMapId, entry.lastContinent, entry.lastZone, nil)
     if resolvedZone then
-      entry.lastZoneName = resolvedZone
-      repairedZone = true
+      addon:LootDebug(string.format("Zone repair preview: itemId=%s %s -> %s", tostring(entry.itemId), tostring(oldZone), tostring(resolvedZone)))
+      if not self.zoneRepairDryRun then
+        entry.lastZoneName = resolvedZone
+        repairedZone = true
+      end
     end
   end
 
@@ -310,34 +351,74 @@ function ItemScan:RepairStoredZoneNames(limit)
   if not addon.DB or not addon.DB.data or not addon.ResolveZoneName then
     return 0
   end
+  if self.zoneRepairFinished then
+    return 0
+  end
 
   if not self.zoneRepairQueue then
     self.zoneRepairQueue = {}
+    local unresolvedMaps = {}
+    addon:LootDebug("Zone repair started.")
     for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
-      if isGenericZoneName(entry.lastZoneName) then
+      if tonumber(entry.lastMapId) and (isGenericZoneName(entry.lastZoneName) or isCurrentMapNameForDifferentMap({ mapId = entry.lastMapId, zoneName = entry.lastZoneName })) then
         self.zoneRepairQueue[#self.zoneRepairQueue + 1] = entry
+      elseif tonumber(entry.lastMapId) and not entry.lastZoneName then
+        unresolvedMaps[tonumber(entry.lastMapId)] = { entry.lastContinent, entry.lastZone }
       end
     end
     for _, bucket in pairs(addon.DB.data.spawnPointsByItem or {}) do
       for _, point in pairs(bucket) do
-        if isGenericZoneName(point.zoneName) then
+        if tonumber(point.mapId) and (isGenericZoneName(point.zoneName) or isCurrentMapNameForDifferentMap(point)) then
           self.zoneRepairQueue[#self.zoneRepairQueue + 1] = point
+        elseif tonumber(point.mapId) and not point.zoneName then
+          unresolvedMaps[tonumber(point.mapId)] = { point.continent, point.zone }
         end
       end
     end
+    for mapId, context in pairs(unresolvedMaps) do
+      addon:LootDebug(string.format("Zone repair preview: mapId=%s -> no known zone name", tostring(mapId)))
+      logZoneNameCandidates(mapId, context[1], context[2])
+    end
+    addon:LootDebug(string.format("Zone repair candidates: %d", #self.zoneRepairQueue))
   end
 
   local repaired = 0
+  local checked = 0
   for _ = 1, (limit or 1) do
     local record = table.remove(self.zoneRepairQueue, 1)
     if not record then break end
-    local resolved = addon:ResolveZoneName(record.mapId, record.continent, record.zone, nil)
+    checked = checked + 1
+    local recordMapId = record.mapId or record.lastMapId
+    if not tonumber(recordMapId) then
+      addon:LootDebug("Zone repair skipped: locationless item has no mapId.")
+    else
+      local resolved = addon:ResolveZoneName(recordMapId, record.continent or record.lastContinent, record.zone or record.lastZone, nil)
     if resolved then
-      record.zoneName = resolved
-      record.lastZoneName = resolved
-      repaired = repaired + 1
-      addon:LootDebug(string.format("Repaired stored zone: mapId=%s name=%s", tostring(record.mapId), resolved))
+      local oldZone = record.zoneName or record.lastZoneName
+      addon:LootDebug(string.format("Zone repair preview: mapId=%s %s -> %s", tostring(recordMapId), tostring(oldZone), tostring(resolved)))
+      if not self.zoneRepairDryRun then
+        record.zoneName = resolved
+        record.lastZoneName = resolved
+        repaired = repaired + 1
+      end
+    elseif isCurrentMapNameForDifferentMap(record) then
+      local oldZone = record.zoneName or record.lastZoneName
+      addon:LootDebug(string.format("Zone repair preview: mapId=%s %s -> unknown (current map name did not match mapId)", tostring(recordMapId), tostring(oldZone)))
+      if not self.zoneRepairDryRun then
+        record.zoneName = nil
+        record.lastZoneName = nil
+        repaired = repaired + 1
+      end
+    else
+      addon:LootDebug(string.format("Zone repair preview: mapId=%s -> no known zone name", tostring(recordMapId)))
+      logZoneNameCandidates(recordMapId, record.continent or record.lastContinent, record.zone or record.lastZone)
     end
+    end
+  end
+
+  if #self.zoneRepairQueue == 0 then
+    addon:LootDebug(string.format("Zone repair finished: checked=%d repaired=%d", checked, repaired))
+    self.zoneRepairFinished = true
   end
 
   if repaired > 0 and addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then

@@ -863,6 +863,10 @@ function SearchUI:Toggle()
     settings:SetPoint("CENTER")
     settings:SetFrameStrata("DIALOG")
     settings:EnableMouse(true)
+    settings:SetMovable(true)
+    settings:RegisterForDrag("LeftButton")
+    settings:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    settings:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     settings:Hide()
     table.insert(UISpecialFrames, "WforgedSettingsFrame")
     settings.bg = settings:CreateTexture(nil, "BACKGROUND")
@@ -876,6 +880,11 @@ function SearchUI:Toggle()
     settings.title = settings:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     settings.title:SetPoint("TOP", 0, -14)
     settings.title:SetText("Wforged Settings")
+    if settings.title.EnableMouse then
+      settings.title:EnableMouse(true)
+      settings.title:SetScript("OnMouseDown", function() settings:StartMoving() end)
+      settings.title:SetScript("OnMouseUp", function() settings:StopMovingOrSizing() end)
+    end
     local settingsClose = CreateFrame("Button", nil, settings)
     settingsClose:SetSize(24, 24)
     settingsClose:SetPoint("TOPRIGHT", -4, -4)
@@ -923,6 +932,13 @@ function SearchUI:Toggle()
     frame.mapDebugButton:SetText("Debug map context")
     frame.mapDebugButton:SetScript("OnClick", function()
       if addon.DebugMapContext then addon:DebugMapContext() end
+    end)
+    frame.zoneDebugButton = CreateFrame("Button", nil, settings, "UIPanelButtonTemplate")
+    frame.zoneDebugButton:SetSize(160, 22)
+    frame.zoneDebugButton:SetPoint("TOPLEFT", 18, -300)
+    frame.zoneDebugButton:SetText("Debug open map zone")
+    frame.zoneDebugButton:SetScript("OnClick", function()
+      if addon.DebugOpenMapZone then addon:DebugOpenMapZone() end
     end)
     frame.resetDataButton = CreateFrame("Button", nil, settings, "UIPanelButtonTemplate")
     frame.resetDataButton:SetSize(160, 22)
@@ -989,7 +1005,7 @@ function SearchUI:Toggle()
     end)
     frame.exportButton:SetPoint("TOPLEFT", 426, -130)
     frame.importButton:SetPoint("TOPLEFT", 426, -158)
-    local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton }
+    local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.zoneDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton }
     local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
     local function setDebugVisible(visible)
       settings.debugVisible = visible and true or false
@@ -1003,6 +1019,7 @@ function SearchUI:Toggle()
         settings.debugSection:SetPoint("TOPLEFT", 18, -42)
         frame.logsCheckbox:SetPoint("TOPLEFT", 18, -72)
         frame.mapDebugButton:SetPoint("TOPLEFT", 300, -72)
+        frame.zoneDebugButton:SetPoint("TOPLEFT", 18, -72)
         frame.importTestButton:SetPoint("TOPLEFT", 18, -100)
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -100)
         frame.testBroadcastButton:SetPoint("TOPLEFT", 18, -128)
@@ -1010,6 +1027,7 @@ function SearchUI:Toggle()
         settings.debugSection:SetPoint("TOPLEFT", 18, -268)
         frame.logsCheckbox:SetPoint("TOPLEFT", 18, -300)
         frame.mapDebugButton:SetPoint("TOPLEFT", 300, -300)
+        frame.zoneDebugButton:SetPoint("TOPLEFT", 18, -300)
         frame.importTestButton:SetPoint("TOPLEFT", 18, -328)
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -328)
         frame.allMapItemsCheckbox:SetPoint("TOPLEFT", 18, -48)
@@ -1096,6 +1114,7 @@ function SearchUI:ApplyElvUISkin(frame)
     if frame.importButton then S:HandleButton(frame.importButton) end
     if frame.settingsButton then S:HandleButton(frame.settingsButton) end
     if frame.mapDebugButton then S:HandleButton(frame.mapDebugButton) end
+    if frame.zoneDebugButton then S:HandleButton(frame.zoneDebugButton) end
     if frame.resetDataButton then S:HandleButton(frame.resetDataButton) end
     if frame.importTestButton then S:HandleButton(frame.importTestButton) end
     if frame.testBroadcastButton then S:HandleButton(frame.testBroadcastButton) end
