@@ -113,6 +113,9 @@ jobs:
     if: needs.build.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
       - name: Download build artifact
         uses: actions/download-artifact@v4
         with:
