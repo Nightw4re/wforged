@@ -317,7 +317,15 @@ function ItemScan:RepairStoredItems(itemId, limit)
     if not self.repairQueueInitialized then
       self.repairQueue = {}
       for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
-        if entry.itemId and (not entry.itemLink or not entry.itemLevel or not entry.quality or isGenericZoneName(entry.lastZoneName)) then
+        if entry.itemId and (
+          not entry.itemName
+          or entry.itemName == ""
+          or (type(entry.itemName) == "string" and entry.itemName:match("^Item #%d+$"))
+          or not entry.itemLink
+          or not entry.itemLevel
+          or not entry.quality
+          or isGenericZoneName(entry.lastZoneName)
+        ) then
           self.repairQueue[#self.repairQueue + 1] = entry
         end
       end
@@ -351,6 +359,19 @@ function ItemScan:RepairStoredItems(itemId, limit)
     addon.MapNotes:RefreshAllMarkers()
   end
   return repaired
+end
+
+function ItemScan:GetRepairStatus()
+  if self.repairQueue then
+    local pending = #self.repairQueue
+    if pending > 0 then
+      return "active", pending
+    end
+  end
+  if self.repairQueueInitialized then
+    return "complete", 0
+  end
+  return "idle", 0
 end
 
 function ItemScan:RepairStoredZoneNames(limit)

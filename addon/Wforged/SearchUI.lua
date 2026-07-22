@@ -15,6 +15,7 @@ local filterOptions = {
   slot = {"", "Head", "Shoulder", "Chest", "Back", "Wrist", "Hands", "Waist", "Legs", "Feet", "Finger", "Trinket", "Neck", "Weapon", "Off Hand"},
   weaponType = {"", "Axe", "Bow", "Crossbow", "Dagger", "Fist", "Gun", "Mace", "Polearm", "Shield", "Staff", "Sword", "Two-Handed Axe", "Two-Handed Sword", "Two-Handed Mace", "Wand"},
   quality = {"", "Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary"},
+  variant = {"", "base", "upgrade"},
   stat1 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Crit", "Haste", "Mastery", "Versatility", "Spell Power"},
   stat2 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Crit", "Haste", "Mastery", "Versatility", "Spell Power"},
   level = {"", "base", "upgrade", "10", "20", "30", "40", "50", "60"},
@@ -26,6 +27,7 @@ local function filterLabel(value, kind)
     if kind == "weaponType" then return "Any weapon" end
     if kind == "armorType" then return "Any armor type" end
     if kind == "quality" then return "Any quality" end
+    if kind == "variant" then return "All item types" end
     return "Any " .. kind
   end
   if value == "base" then return "Base items" end
@@ -51,6 +53,11 @@ local function createFilter(parent, kind, x, y)
     local menu = _G["WforgedFilterMenu"]
     if not menu then
       menu = CreateFrame("Frame", "WforgedFilterMenu", UIParent, "UIDropDownMenuTemplate")
+    end
+    if menu:IsShown() and menu.filterButton == self then
+      if CloseDropDownMenus then CloseDropDownMenus() end
+      menu.filterButton = nil
+      return
     end
     UIDropDownMenu_Initialize(menu, function(_, level)
       for _, value in ipairs(filterOptions[kind]) do
@@ -324,12 +331,13 @@ local function createRow(parent, index)
   row.qualityText:SetPoint("LEFT", 320, 0)
   row.qualityText:SetWidth(85)
   row.locationText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  row.locationText:SetPoint("LEFT", 400, 0)
+  row.locationText:SetPoint("LEFT", 405, 0)
   row.locationText:SetWidth(170)
+  row.locationText:SetJustifyH("LEFT")
   row.locationText:SetWordWrap(false)
   row.currencyButton = CreateFrame("Button", nil, row)
-  row.currencyButton:SetSize(18, 18)
-  row.currencyButton:SetPoint("LEFT", row.locationText, "RIGHT", 2, 0)
+  row.currencyButton:SetSize(14, 14)
+  row.currencyButton:SetPoint("LEFT", row.locationText, "LEFT", 0, 0)
   row.currencyButton.texture = row.currencyButton:CreateTexture(nil, "ARTWORK")
   row.currencyButton.texture:SetAllPoints()
   row.currencyButton.count = row.currencyButton:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
@@ -390,7 +398,13 @@ local function createTableHeader(parent, text, key, x, width)
   local header = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   header:SetPoint("TOPLEFT", x, 0)
   header:SetSize(width, 22)
-  header:SetText(text)
+  header.label = text
+  header.sortKey = key
+  header.sortArrow = header:CreateTexture(nil, "OVERLAY")
+  header.sortArrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
+  header.sortArrow:SetSize(16, 16)
+  header.sortArrow:SetPoint("CENTER", header, "RIGHT", -11, 0)
+  header.sortArrow:Hide()
   header:SetScript("OnClick", function()
     if SearchUI.sortKey == key then
       SearchUI.sortAscending = not SearchUI.sortAscending
@@ -398,9 +412,58 @@ local function createTableHeader(parent, text, key, x, width)
       SearchUI.sortKey = key
       SearchUI.sortAscending = true
     end
+    SearchUI:UpdateHeaderSortState()
     SearchUI:Refresh()
   end)
   return header
+end
+
+function SearchUI:UpdateHeaderSortState()
+  for _, header in ipairs((self.frame and self.frame.headers) or {}) do
+    local active = header.sortKey == self.sortKey
+    header:SetText(header.label)
+    if header.sortArrow then
+      if active then
+        -- Use one atlas image for both directions so the arrows keep the
+        -- same visual style; rotate it instead of switching atlas regions.
+        header.sortArrow:SetTexCoord(0, 0.5, 0.5, 1)
+        if header.sortArrow.SetRotation then
+          header.sortArrow:SetRotation(self.sortAscending and math.pi or 0)
+        end
+        header.sortArrow:Show()
+      else
+        header.sortArrow:Hide()
+      end
+    end
+    local fontString = header.GetFontString and header:GetFontString()
+    if fontString and fontString.SetTextColor then
+      if active then
+        fontString:SetTextColor(1, 0.82, 0, 1)
+      else
+        fontString:SetTextColor(0.75, 0.75, 0.75, 1)
+      end
+    end
+  end
+end
+
+function SearchUI:UpdateRepairIndicator()
+  local indicator = self.frame and self.frame.repairIndicator
+  if not indicator then return end
+  local state, pending = "idle", 0
+  if addon.ItemScan and addon.ItemScan.GetRepairStatus then
+    state, pending = addon.ItemScan:GetRepairStatus()
+  end
+  if state == "active" then
+    indicator:SetText(string.format("Repairing item data... %d remaining", pending))
+    indicator:SetTextColor(1, 0.82, 0, 1)
+    indicator:Show()
+  elseif state == "complete" then
+    indicator:SetText("Item data repair complete")
+    indicator:SetTextColor(0.4, 1, 0.4, 1)
+    indicator:Show()
+  else
+    indicator:Hide()
+  end
 end
 
 local function configureRow(row)
@@ -556,6 +619,7 @@ function SearchUI:Refresh(query)
     return tostring(left.fingerprint or "") < tostring(right.fingerprint or "")
   end)
   self.results = results
+  self:UpdateHeaderSortState()
   self:EnsureRows(#results)
   for index, row in ipairs(self.rows) do
     local result = results[index]
@@ -581,15 +645,17 @@ function SearchUI:Refresh(query)
       local isUpgrade = (tonumber(result.upgradeLevel or 0) or 0) > 0
       if isUpgrade then
         row.locationText:SetText(string.format(
-          "#upgrade - %s | item %s",
-          upgradeText or "unknown cost",
-          tostring(result.sourceItemId or result.sourceItemKey or "?")
+          "#upgrade - %s",
+          upgradeText or "unknown cost"
         ))
         if result.upgradeCurrency == "rune" and GetItemIcon then
           local currencyId = 375250
           row.currencyButton.texture:SetTexture(GetItemIcon(currencyId) or "Interface\\Icons\\INV_Misc_QuestionMark")
           row.currencyButton.itemLink = GetItemInfo and select(2, GetItemInfo(currencyId)) or nil
-          row.currencyButton.count:SetText(GetItemCount and tostring(GetItemCount(currencyId, true) or 0) or "0")
+          row.currencyButton.count:SetText("")
+          row.currencyButton.count:Hide()
+          row.currencyButton:ClearAllPoints()
+          row.currencyButton:SetPoint("LEFT", row.locationText, "LEFT", row.locationText:GetStringWidth() + 4, 0)
           row.currencyButton:Show()
         else
           row.currencyButton:Hide()
@@ -679,6 +745,7 @@ end
 
 function SearchUI:ResetFilters()
   if not self.frame then return end
+  local previousQuery = self.frame.editBox and self.frame.editBox:GetText() or ""
   self.filters = {}
   for kind, button in pairs(self.frame.filters or {}) do
     self.filters[kind] = ""
@@ -686,7 +753,11 @@ function SearchUI:ResetFilters()
     button:SetText(filterLabel("", kind))
   end
   self.frame.editBox:SetText("")
-  self:Refresh("")
+  -- SetText triggers OnTextChanged and therefore Refresh. Avoid sorting the
+  -- full database twice when the query was not already empty.
+  if previousQuery == "" then
+    self:Refresh("")
+  end
 end
 
 function SearchUI:Toggle()
@@ -768,7 +839,7 @@ function SearchUI:Toggle()
 
     self.filters = {}
     frame.filters = {}
-    local filterKinds = {"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "level"}
+    local filterKinds = {"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "level", "variant"}
     for index, kind in ipairs(filterKinds) do
       local filterRow = index <= 4 and 0 or 1
       local filterColumn = (index - 1) % 4
@@ -786,6 +857,11 @@ function SearchUI:Toggle()
     local hint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     hint:SetPoint("LEFT", editBox, "RIGHT", 12, 0)
     hint:SetText("Search by name, stats, level, or upgrade.")
+    frame.repairIndicator = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.repairIndicator:SetPoint("LEFT", hint, "RIGHT", 12, 0)
+    frame.repairIndicator:SetWidth(190)
+    frame.repairIndicator:SetJustifyH("LEFT")
+    frame.repairIndicator:Hide()
 
     frame.logsCheckbox = createCheckbox(frame, "Show logs")
     frame.logsCheckbox:SetPoint("TOPLEFT", editBox, "BOTTOMLEFT", -4, -42)
@@ -1059,9 +1135,10 @@ function SearchUI:Toggle()
     frame.headers = {
       createTableHeader(headerFrame, "Item", "name", 0, 260),
       createTableHeader(headerFrame, "iLvl", "level", 270, 40),
-      createTableHeader(headerFrame, "Quality", "quality", 320, 70),
-      createTableHeader(headerFrame, "Location", "location", 392, 270),
+      createTableHeader(headerFrame, "Quality", "quality", 320, 85),
+      createTableHeader(headerFrame, "Location", "location", 405, 170),
     }
+    self:UpdateHeaderSortState()
 
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(820, 930)

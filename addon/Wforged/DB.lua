@@ -3,6 +3,16 @@ local addonName, addon = ...
 local DB = {}
 addon.DB = DB
 
+local function matchesWeaponFilter(haystack, weaponType)
+  local normalized = string.lower(weaponType or "")
+  local twoHandedType = normalized:match("^two%-handed (.+)$")
+  if twoHandedType then
+    return haystack:find("two-hand", 1, true) ~= nil
+      and haystack:find(twoHandedType, 1, true) ~= nil
+  end
+  return haystack:find(normalized, 1, true) ~= nil
+end
+
 local function ensureTable(root, key)
   if type(root[key]) ~= "table" then
     root[key] = {}
@@ -698,7 +708,19 @@ function DB:SearchItems(query, filters)
 
   for itemKey, bucket in pairs(self.data.itemsByKey) do
     local fingerprint = self:GetPreferredFingerprint(itemKey, bucket)
-      local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
+    if filters.variant == "base" or filters.variant == "upgrade" then
+      local wantUpgrade = filters.variant == "upgrade"
+      for _, variant in pairs(bucket.variants or {}) do
+        local candidateFingerprint = variant and variant.fingerprint
+        local candidate = candidateFingerprint and self.data.itemsByFingerprint[candidateFingerprint]
+        local isUpgrade = candidate and (tonumber(candidate.upgradeLevel or 0) or 0) > 0
+        if candidate and isUpgrade == wantUpgrade then
+          fingerprint = candidateFingerprint
+          break
+        end
+      end
+    end
+    local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
     if entry then
       local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
         entry.lastMapId, entry.lastContinent, entry.lastZone, entry.lastZoneName
@@ -724,7 +746,7 @@ function DB:SearchItems(query, filters)
       if matches and filters.armorType and filters.armorType ~= "" and not haystack:find(string.lower(filters.armorType), 1, true) then
         matches = false
       end
-      if matches and filters.weaponType and filters.weaponType ~= "" and not haystack:find(string.lower(filters.weaponType), 1, true) then
+      if matches and filters.weaponType and filters.weaponType ~= "" and not matchesWeaponFilter(haystack, filters.weaponType) then
         matches = false
       end
       if matches and filters.quality and filters.quality ~= "" then
@@ -749,6 +771,14 @@ function DB:SearchItems(query, filters)
         elseif filters.level == "base" and (entry.upgradeLevel or 0) > 0 then
           matches = false
         elseif tonumber(filters.level) and level < tonumber(filters.level) then
+          matches = false
+        end
+      end
+      if matches and filters.variant and filters.variant ~= "" then
+        local isUpgrade = (tonumber(entry.upgradeLevel or 0) or 0) > 0
+        if filters.variant == "upgrade" and not isUpgrade then
+          matches = false
+        elseif filters.variant == "base" and isUpgrade then
           matches = false
         end
       end

@@ -160,6 +160,9 @@ registerEvent("PLAYER_LOGIN", function(self)
           self.ItemScan:RepairStoredZoneNames(1)
         end
       end
+      if self.SearchUI and self.SearchUI.UpdateRepairIndicator then
+        self.SearchUI:UpdateRepairIndicator()
+      end
       if self.Sync and self.Sync.ProcessImportQueue then
         self.Sync:ProcessImportQueue(0.2)
       end
