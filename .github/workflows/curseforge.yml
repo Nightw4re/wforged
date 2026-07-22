@@ -17,11 +17,44 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  check_release:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
       should_release: ${{ steps.release_check.outputs.should_release }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read package version
+        id: version
+        shell: bash
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether release is needed
+        id: release_check
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          FORCE_DEPLOY: ${{ inputs.force_deploy || false }}
+        run: |
+          release_tag="v${VERSION}"
+          if [ "${FORCE_DEPLOY}" = "true" ] || ! git tag --list "${release_tag}" | grep -q "^${release_tag}$"; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "Release required for ${release_tag}."
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "Release ${release_tag} already exists; skipping build and deploy."
+          fi
+
+  build:
+    needs: check_release
+    if: needs.check_release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ needs.check_release.outputs.version }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -41,33 +74,11 @@ jobs:
       - name: Build release archive
         run: npm run build
 
-      - name: Read package version
-        id: version
-        shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
-
-      - name: Check whether release is needed
-        id: release_check
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          FORCE_DEPLOY: ${{ inputs.force_deploy || false }}
-        run: |
-          release_tag="v${VERSION}"
-          if [ "${FORCE_DEPLOY}" = "true" ] || ! git tag --list "${release_tag}" | grep -q "^${release_tag}$"; then
-            echo "should_release=true" >> "$GITHUB_OUTPUT"
-            echo "Release required for ${release_tag}."
-          else
-            echo "should_release=false" >> "$GITHUB_OUTPUT"
-            echo "Release ${release_tag} already exists; skipping deploy."
-          fi
-
       - name: Generate changelog
         id: changelog
-        if: steps.release_check.outputs.should_release == 'true'
         shell: bash
         env:
-          RELEASE_TAG: v${{ steps.version.outputs.version }}
+          RELEASE_TAG: v${{ needs.check_release.outputs.version }}
         run: |
           previous_tag="$(git tag --sort=-version:refname | grep -Fxv "$RELEASE_TAG" | head -n 1 || true)"
           if [ -n "$previous_tag" ]; then
@@ -95,14 +106,12 @@ jobs:
           fi
 
       - name: Upload build artifact
-        if: steps.release_check.outputs.should_release == 'true'
         run: |
           mkdir -p release
-          cp "dist/Wforged-${{ steps.version.outputs.version }}.zip" release/
+          cp "dist/Wforged-${{ needs.check_release.outputs.version }}.zip" release/
           cp CHANGELOG_RELEASE.md release/
 
       - name: Store build artifact
-        if: steps.release_check.outputs.should_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: wforged-release
@@ -110,7 +119,6 @@ jobs:
 
   upload:
     needs: build
-    if: needs.build.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
