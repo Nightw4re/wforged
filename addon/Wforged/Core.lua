@@ -119,7 +119,8 @@ function addon:RegisterEvent(eventName, handler)
 end
 
 function addon:ResolveZoneName(mapId, continent, zone, zoneName)
-  if zoneName and zoneName ~= "" then
+  local genericName = type(zoneName) == "string" and zoneName:match("^Map %d+$")
+  if zoneName and zoneName ~= "" and not genericName then
     return zoneName
   end
 
@@ -133,6 +134,13 @@ function addon:ResolveZoneName(mapId, continent, zone, zoneName)
   if mapId and GetMapNameByID then
     local resolved = GetMapNameByID(mapId)
     if resolved and resolved ~= "" then
+      return resolved
+    end
+  end
+
+  if mapId and GetMapInfo then
+    local ok, resolved = pcall(GetMapInfo, mapId)
+    if ok and resolved and resolved ~= "" and not tostring(resolved):match("^Map %d+$") then
       return resolved
     end
   end
@@ -422,7 +430,10 @@ function addon.MapNotes:RefreshAllMarkers()
       marker:ClearAllPoints()
       marker:SetPoint("CENTER", WorldMapDetailFrame, "TOPLEFT", result.lastX * WorldMapDetailFrame:GetWidth(), -result.lastY * WorldMapDetailFrame:GetHeight())
       marker.dot:SetTexture(result.itemTexture or "Interface\\Icons\\INV_Misc_QuestionMark")
-      marker.dot:SetVertexColor(1, 1, 1, 1)
+      local currentRealm = addon.DB and addon.DB.GetCurrentRealm and addon.DB:GetCurrentRealm() or "Unknown"
+      local foreignRealm = result.realm and result.realm ~= "Unknown" and result.realm ~= currentRealm
+      marker:SetAlpha(foreignRealm and 0.35 or 1)
+      marker.dot:SetVertexColor(foreignRealm and 0.55 or 1, foreignRealm and 0.55 or 1, foreignRealm and 0.55 or 1, 1)
       marker.result = result
       marker:Show()
     end

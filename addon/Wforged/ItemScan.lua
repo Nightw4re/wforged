@@ -182,6 +182,7 @@ function ItemScan:FinalizePendingRecord(record)
     statsText = statsText,
     tooltipText = tooltipText,
     sourceType = record.sourceType or "manual",
+    realm = addon.DB:GetCurrentRealm(),
     mapId = record.mapId,
     x = record.x,
     y = record.y,
@@ -217,14 +218,31 @@ function ItemScan:FinalizePendingRecord(record)
   return fingerprint
 end
 
+local function isGenericZoneName(name)
+  return type(name) == "string" and name:match("^Map %d+$") ~= nil
+end
+
 function ItemScan:RepairStoredItem(itemId, entry)
-  if not itemId or not entry or not GetItemInfo then
+  if not itemId or not entry then
     return false
+  end
+
+  local repairedZone = false
+  if isGenericZoneName(entry.lastZoneName) and addon.ResolveZoneName then
+    local resolvedZone = addon:ResolveZoneName(entry.lastMapId, entry.lastContinent, entry.lastZone, nil)
+    if resolvedZone then
+      entry.lastZoneName = resolvedZone
+      repairedZone = true
+    end
+  end
+
+  if not GetItemInfo then
+    return repairedZone
   end
 
   local itemName, itemLink, quality, itemLevel, _, _, _, _, _, itemTexture = GetItemInfo(itemId)
   if not isItemInfoReady(itemName, itemLevel) or not itemLink then
-    return false
+    return repairedZone
   end
 
   local statsText, tooltipText = collectTooltipData(itemLink)
@@ -252,7 +270,7 @@ function ItemScan:RepairStoredItems(itemId, limit)
     if not self.repairQueueInitialized then
       self.repairQueue = {}
       for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
-        if entry.itemId and (not entry.itemLink or not entry.itemLevel or not entry.quality) then
+        if entry.itemId and (not entry.itemLink or not entry.itemLevel or not entry.quality or isGenericZoneName(entry.lastZoneName)) then
           self.repairQueue[#self.repairQueue + 1] = entry
         end
       end
@@ -276,6 +294,49 @@ function ItemScan:RepairStoredItems(itemId, limit)
         repaired = repaired + 1
         addon:LootDebug(string.format("Repaired stored item metadata: id=%s name=%s level=%s quality=%s", tostring(entry.itemId), tostring(entry.itemName), tostring(entry.itemLevel), tostring(entry.quality)))
       end
+    end
+  end
+
+  if repaired > 0 and addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+    addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+  end
+  if repaired > 0 and addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+    addon.MapNotes:RefreshAllMarkers()
+  end
+  return repaired
+end
+
+function ItemScan:RepairStoredZoneNames(limit)
+  if not addon.DB or not addon.DB.data or not addon.ResolveZoneName then
+    return 0
+  end
+
+  if not self.zoneRepairQueue then
+    self.zoneRepairQueue = {}
+    for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+      if isGenericZoneName(entry.lastZoneName) then
+        self.zoneRepairQueue[#self.zoneRepairQueue + 1] = entry
+      end
+    end
+    for _, bucket in pairs(addon.DB.data.spawnPointsByItem or {}) do
+      for _, point in pairs(bucket) do
+        if isGenericZoneName(point.zoneName) then
+          self.zoneRepairQueue[#self.zoneRepairQueue + 1] = point
+        end
+      end
+    end
+  end
+
+  local repaired = 0
+  for _ = 1, (limit or 1) do
+    local record = table.remove(self.zoneRepairQueue, 1)
+    if not record then break end
+    local resolved = addon:ResolveZoneName(record.mapId, record.continent, record.zone, nil)
+    if resolved then
+      record.zoneName = resolved
+      record.lastZoneName = resolved
+      repaired = repaired + 1
+      addon:LootDebug(string.format("Repaired stored zone: mapId=%s name=%s", tostring(record.mapId), resolved))
     end
   end
 

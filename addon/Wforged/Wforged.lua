@@ -131,7 +131,10 @@ registerEvent("PLAYER_LOGIN", function(self)
   end
   if C_Timer and C_Timer.After and self.ItemScan and self.ItemScan.RepairStoredItems then
     C_Timer.After(5, function()
-      self.ItemScan:RepairStoredItems()
+      local repaired = self.ItemScan:RepairStoredItems(nil, 1)
+      if repaired == 0 then
+        self.ItemScan:RepairStoredZoneNames(1)
+      end
     end)
   end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
@@ -143,7 +146,10 @@ registerEvent("PLAYER_LOGIN", function(self)
         self.AutoConfirm:TryConfirm()
       end
       if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
-        self.ItemScan:RepairStoredItems(nil, 1)
+        local repaired = self.ItemScan:RepairStoredItems(nil, 1)
+        if repaired == 0 and self.ItemScan.zoneRepairQueue and self.ItemScan.RepairStoredZoneNames then
+          self.ItemScan:RepairStoredZoneNames(1)
+        end
       end
       if self.Sync and self.Sync.ProcessImportQueue then
         self.Sync:ProcessImportQueue(0.2)
