@@ -64,6 +64,12 @@ function DB:Init()
   if db.settings.receiveGuildUpdates == nil then db.settings.receiveGuildUpdates = true end
 
   self.data = db
+  local currentRealm = self:GetCurrentRealm()
+  for _, entry in pairs(db.itemsByFingerprint or {}) do
+    if entry and not entry.realm and entry.lastSource ~= "import" and entry.lastSource ~= "guild" then
+      entry.realm = currentRealm
+    end
+  end
   self:CleanupInvalidUpgradePlaceholders()
   self:CleanupInvalidUpgradeCosts()
   self:PurgeUnknownMapLocations()
@@ -127,6 +133,10 @@ end
 
 function DB:GetCharacterKey()
   return string.format("%s-%s", UnitName("player") or "unknown", GetRealmName() or "unknown")
+end
+
+function DB:GetCurrentRealm()
+  return (GetRealmName and GetRealmName()) or "Unknown"
 end
 
 function DB:CleanupInvalidUpgradePlaceholders()
@@ -318,6 +328,11 @@ function DB:RecordItemObservation(payload)
     firstSeenAt = time(),
     sources = {},
   }
+  payload.realm = payload.realm or self:GetCurrentRealm()
+  if entry.realm and entry.realm == self:GetCurrentRealm() and payload.realm ~= entry.realm
+    and (payload.sourceType == "import" or payload.sourceType == "guild") then
+    return entry
+  end
 
   entry.itemKey = itemKey
   entry.itemLink = payload.itemLink
@@ -325,6 +340,7 @@ function DB:RecordItemObservation(payload)
   entry.itemId = payload.itemId
   entry.itemTexture = payload.itemTexture
   entry.isWorldforged = payload.isWorldforged and true or false
+  entry.realm = payload.realm
   entry.quality = payload.quality
   entry.itemLevel = payload.itemLevel
   entry.effectiveLevel = payload.effectiveLevel or payload.itemLevel
@@ -734,6 +750,7 @@ function DB:SearchItems(query, filters)
             itemKey = itemKey,
             fingerprint = fingerprint,
             itemId = entry.itemId or bucket.itemId,
+            realm = entry.realm or "Unknown",
             itemName = bucket.itemName or entry.itemName or "Unknown",
             itemLink = entry.itemLink,
             itemTexture = entry.itemTexture,

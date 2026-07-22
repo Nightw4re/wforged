@@ -17,11 +17,12 @@ test('bundled database has a valid WFGDB6 snapshot', () => {
     const fields = record.split('|');
     assert.equal(fields[0], 'WFG6');
     assert.match(fields[1], /^\d+$/);
-    assert.equal(fields.length, 6);
+    assert.equal(fields.length, 7);
     assert.match(fields[2], /^\d+$/);
     assert.match(fields[3], /^0?\.\d+$/);
     assert.match(fields[4], /^0?\.\d+$/);
     assert.match(fields[5], /^\d+$/);
+    assert.ok(fields[6], 'bundled records must include a source realm');
   }
 });
 

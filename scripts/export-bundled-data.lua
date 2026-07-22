@@ -37,7 +37,7 @@ for _, id in ipairs(ids) do
   local entry = latest[id]
   local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
   local observedAt = tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0
-  records[#records + 1] = table.concat({"WFG6", id, mapId, x, y, observedAt}, "|")
+    records[#records + 1] = table.concat({"WFG6", id, mapId, x, y, observedAt, entry.realm or "Unknown"}, "|")
 end
 
 local file = assert(io.open(output, "w"))

@@ -78,7 +78,7 @@ Developer settings include:
 
 ## Import and export
 
-Export creates a compact `WFGDB6` string containing item IDs, locations, coordinates, and timestamps. Import merges the data into the local database and does not remove existing items. Processing is batched for large datasets.
+Export creates a compact grouped `WFGDB7` string organized as `realm -> location -> itemId:timestamp`. Import also accepts the older `WFGDB6` format, merges data into the local database, and does not remove existing items. Processing is batched for large datasets.
 
 After import, item names, quality, level, icons, stats, and tooltip text are resolved locally by the client. Newly loaded metadata can appear a moment after the item is first added.
 
@@ -94,7 +94,7 @@ Enable `Send guild updates` to broadcast newly looted Worldforged items. Enable 
 /wforged scan
 /wforged vendor
 /wforged export
-/wforged import <WFGDB6 string>
+/wforged import <WFGDB7 or WFGDB6 string>
 /wforged sync
 /wforged debug
 /wforged retry
