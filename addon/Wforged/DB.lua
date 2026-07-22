@@ -339,7 +339,8 @@ function DB:RecordItemObservation(payload)
   entry.itemName = payload.itemName
   entry.itemId = payload.itemId
   entry.itemTexture = payload.itemTexture
-  entry.isWorldforged = payload.isWorldforged and true or false
+  entry.isWorldforged = entry.isWorldforged or (payload.isWorldforged and true or false)
+  entry.upgradeCandidate = (not entry.isWorldforged) and (payload.upgradeCandidate and true or entry.upgradeCandidate) or nil
   entry.realm = payload.realm
   entry.quality = payload.quality
   entry.itemLevel = payload.itemLevel
@@ -410,6 +411,21 @@ end
 function DB:RecordVendorUpgrade(payload)
   if not self.data or not payload.npcId or not payload.itemKey then
     return
+  end
+
+  local promoted = 0
+  for _, entry in pairs(self.data.itemsByFingerprint or {}) do
+    if tonumber(entry.itemId) == tonumber(payload.itemId) then
+      entry.isWorldforged = true
+      entry.upgradeCandidate = nil
+      promoted = promoted + 1
+    end
+  end
+  if promoted > 0 then
+    addon:LootDebug(string.format("Promoted upgrade candidate: itemId=%s variants=%d", tostring(payload.itemId), promoted))
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
   end
 
   local vendors = self.data.vendorsByNpcId

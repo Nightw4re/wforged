@@ -147,17 +147,34 @@ function addon:DebugOpenMapZone()
   local zone = GetCurrentMapZone and GetCurrentMapZone() or nil
   local mapName = GetMapInfo and GetMapInfo() or nil
   local zonesName = nil
+  local zoneInfo = nil
   if continent and zone and GetMapZones then
     local zones = { GetMapZones(continent) }
     zonesName = zones[zone]
   end
+  if continent and zone and GetMapZoneInfo then
+    local ok, value = pcall(GetMapZoneInfo, continent, zone)
+    if ok then zoneInfo = value end
+  end
+  local inInstance, instanceType = false, nil
+  if IsInInstance then
+    inInstance, instanceType = IsInInstance()
+  end
   self:Print(string.format(
-    "Open map zone: mapId=%s map=%s real=%s zone=%s continent=%s zoneIndex=%s indexedName=%s",
+    "Open map zone: mapId=%s map=%s playerReal=%s playerZone=%s playerSubZone=%s continent=%s zoneIndex=%s indexedName=%s zoneInfo=%s instance=%s/%s dungeon=%s/%s",
     tostring(mapId), tostring(mapName or "?"),
     tostring(GetRealZoneText and GetRealZoneText() or "?"),
-    tostring(GetZoneText and GetZoneText() or "?"), tostring(continent or "?"),
-    tostring(zone or "?"), tostring(zonesName or "?")
+    tostring(GetZoneText and GetZoneText() or "?"),
+    tostring(GetSubZoneText and GetSubZoneText() or "?"), tostring(continent or "?"),
+    tostring(zone or "?"), tostring(zonesName or "?"), tostring(zoneInfo or "?"),
+    tostring(inInstance), tostring(instanceType or "none"),
+    tostring(GetCurrentMapDungeonLevel and GetCurrentMapDungeonLevel() or "?"),
+    tostring(GetNumDungeonMapLevels and GetNumDungeonMapLevels() or "?")
   ))
+  if continent and GetMapZones then
+    local zones = { GetMapZones(continent) }
+    self:Print("Open map zone list: " .. table.concat(zones, ", "))
+  end
 end
 
 local function ensureMapPin()
@@ -742,6 +759,9 @@ end
 
 function addon.AutoConfirm:SetLootContext(hasWorldforged)
   self.hasWorldforgedLoot = hasWorldforged and true or false
+  if not self.hasWorldforgedLoot then
+    self.loggedDisabled = false
+  end
   if self.hasWorldforgedLoot then
     self:RequestDebugScan("worldforged-loot-opened")
     addon:LootDebug("Loot context marked as worldforged.")
@@ -818,7 +838,8 @@ local function tryNamedButton(frameName, buttonSuffix)
 end
 
 function addon.AutoConfirm:TryNonStaticPopupConfirm()
-  if not self.hasWorldforgedLoot then
+  local settings = addon.DB and addon.DB.GetSettings and addon.DB:GetSettings()
+  if not settings or settings.autoConfirmWorldforged == false or not self.hasWorldforgedLoot then
     return false
   end
 
@@ -836,9 +857,19 @@ function addon.AutoConfirm:TryNonStaticPopupConfirm()
 end
 
 function addon.AutoConfirm:TryConfirm()
+  local settings = addon.DB and addon.DB.GetSettings and addon.DB:GetSettings()
   if not self.lootWindowOpen then
     return false
   end
+  if not settings or settings.autoConfirmWorldforged == false then
+    self.hasWorldforgedLoot = false
+    if not self.loggedDisabled then
+      addon:LootDebug(string.format("AutoConfirm blocked: enabled=%s", tostring(settings and settings.autoConfirmWorldforged)))
+      self.loggedDisabled = true
+    end
+    return false
+  end
+  self.loggedDisabled = false
 
   local sawPopup = false
   if self.lootScanUntil and GetTime() <= self.lootScanUntil and not self.hasWorldforgedLoot then

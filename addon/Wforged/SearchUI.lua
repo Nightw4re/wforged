@@ -263,7 +263,10 @@ local function hasUsableLocation(result)
     result.lastZoneName
   ) or result.lastZoneName
 
-  return (zoneName and zoneName ~= "") or (result.lastMapId ~= nil)
+  if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
+    return false
+  end
+  return true
 end
 
 local function getLocationText(result)
@@ -271,7 +274,10 @@ local function getLocationText(result)
   local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
     result.lastMapId, result.lastContinent, result.lastZone, result.lastZoneName
   ) or result.lastZoneName
-  return zoneName or ("Map " .. tostring(result.lastMapId))
+  if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
+    return "-"
+  end
+  return zoneName
 end
 
 local function getQualityName(quality)
@@ -558,12 +564,14 @@ function SearchUI:Refresh(query)
       row:SetAlpha(isForeignRealm(result) and 0.45 or 1)
       local upgradeText = formatUpgradeCost(result.upgradeCost, result.upgradeCurrency)
       local canShareLocation = hasUsableLocation(result)
-      local metadataPending = not result.itemLevel or result.itemLevel <= 0
+      -- Bags and some utility items legitimately have item level 0.  That is
+      -- not the same as item data still being unavailable.
+      local metadataPending = not result.itemName or result.itemName == ""
         or not result.quality or result.quality < 0
       row.nameText:SetText(string.format(
         "%s%s|r",
         metadataPending and "|cffaaaaaa" or getQualityColorCode(result.quality),
-        result.itemName
+        result.itemName or (result.itemId and ("Item #" .. tostring(result.itemId)) or "Unknown item")
       ))
       local icon = result.itemTexture
       if not icon and result.itemId and GetItemIcon then icon = GetItemIcon(result.itemId) end
@@ -789,6 +797,7 @@ function SearchUI:Toggle()
     frame.autoConfirmCheckbox:SetPoint("LEFT", frame.logsCheckbox, "RIGHT", 180, 0)
     frame.autoConfirmCheckbox:SetScript("OnClick", function(button)
       addon.DB:GetSettings().autoConfirmWorldforged = button:GetChecked() and true or false
+      addon:LootDebug(string.format("AutoConfirm setting changed: enabled=%s", tostring(button:GetChecked() and true or false)))
       if not button:GetChecked() and addon.AutoConfirm then
         addon.AutoConfirm:SetLootContext(false)
       end
@@ -933,13 +942,6 @@ function SearchUI:Toggle()
     frame.mapDebugButton:SetScript("OnClick", function()
       if addon.DebugMapContext then addon:DebugMapContext() end
     end)
-    frame.zoneDebugButton = CreateFrame("Button", nil, settings, "UIPanelButtonTemplate")
-    frame.zoneDebugButton:SetSize(160, 22)
-    frame.zoneDebugButton:SetPoint("TOPLEFT", 18, -300)
-    frame.zoneDebugButton:SetText("Debug open map zone")
-    frame.zoneDebugButton:SetScript("OnClick", function()
-      if addon.DebugOpenMapZone then addon:DebugOpenMapZone() end
-    end)
     frame.resetDataButton = CreateFrame("Button", nil, settings, "UIPanelButtonTemplate")
     frame.resetDataButton:SetSize(160, 22)
     frame.resetDataButton:SetPoint("TOPLEFT", 300, -328)
@@ -1005,7 +1007,7 @@ function SearchUI:Toggle()
     end)
     frame.exportButton:SetPoint("TOPLEFT", 426, -130)
     frame.importButton:SetPoint("TOPLEFT", 426, -158)
-    local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.zoneDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton }
+    local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton }
     local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
     local function setDebugVisible(visible)
       settings.debugVisible = visible and true or false
@@ -1019,7 +1021,6 @@ function SearchUI:Toggle()
         settings.debugSection:SetPoint("TOPLEFT", 18, -42)
         frame.logsCheckbox:SetPoint("TOPLEFT", 18, -72)
         frame.mapDebugButton:SetPoint("TOPLEFT", 300, -72)
-        frame.zoneDebugButton:SetPoint("TOPLEFT", 18, -72)
         frame.importTestButton:SetPoint("TOPLEFT", 18, -100)
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -100)
         frame.testBroadcastButton:SetPoint("TOPLEFT", 18, -128)
@@ -1027,7 +1028,6 @@ function SearchUI:Toggle()
         settings.debugSection:SetPoint("TOPLEFT", 18, -268)
         frame.logsCheckbox:SetPoint("TOPLEFT", 18, -300)
         frame.mapDebugButton:SetPoint("TOPLEFT", 300, -300)
-        frame.zoneDebugButton:SetPoint("TOPLEFT", 18, -300)
         frame.importTestButton:SetPoint("TOPLEFT", 18, -328)
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -328)
         frame.allMapItemsCheckbox:SetPoint("TOPLEFT", 18, -48)
@@ -1114,7 +1114,6 @@ function SearchUI:ApplyElvUISkin(frame)
     if frame.importButton then S:HandleButton(frame.importButton) end
     if frame.settingsButton then S:HandleButton(frame.settingsButton) end
     if frame.mapDebugButton then S:HandleButton(frame.mapDebugButton) end
-    if frame.zoneDebugButton then S:HandleButton(frame.zoneDebugButton) end
     if frame.resetDataButton then S:HandleButton(frame.resetDataButton) end
     if frame.importTestButton then S:HandleButton(frame.importTestButton) end
     if frame.testBroadcastButton then S:HandleButton(frame.testBroadcastButton) end

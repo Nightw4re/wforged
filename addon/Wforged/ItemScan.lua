@@ -2,7 +2,7 @@ local addonName, addon = ...
 
 local ItemScan = {}
 addon.ItemScan = ItemScan
-ItemScan.zoneRepairDryRun = true
+ItemScan.zoneRepairDryRun = false
 
 local tooltip = CreateFrame("GameTooltip", "WforgedScanTooltip", nil, "GameTooltipTemplate")
 tooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
@@ -175,7 +175,8 @@ function ItemScan:FinalizePendingRecord(record)
     itemName = itemName,
     itemId = itemId,
     itemTexture = itemTexture,
-    isWorldforged = self:IsWorldforgedItem(record.itemLink, true),
+    isWorldforged = record.isWorldforged or self:IsWorldforgedItem(record.itemLink, true),
+    upgradeCandidate = record.upgradeCandidate,
     quality = quality,
     itemLevel = itemLevel,
     effectiveLevel = effectiveLevel,
@@ -246,7 +247,7 @@ local function logZoneNameCandidates(mapId, continent, zone)
     candidates.index = zones[zone]
   end
   addon:LootDebug(string.format(
-    "Zone candidates: mapId=%s real=%s zone=%s map=%s index=%s",
+    "Zone candidates: mapId=%s playerReal=%s playerZone=%s map=%s index=%s",
     tostring(mapId), tostring(candidates.real or "?"), tostring(candidates.zone or "?"),
     tostring(candidates.map or "?"), tostring(candidates.index or "?")
   ))
@@ -260,8 +261,13 @@ function ItemScan:RepairStoredItem(itemId, entry)
   local repairedZone = false
   if isCurrentMapNameForDifferentMap({ mapId = entry.lastMapId, zoneName = entry.lastZoneName }) then
     local oldZone = entry.lastZoneName
-    addon:LootDebug(string.format("Zone repair preview: itemId=%s %s -> unknown (current map name did not match mapId)", tostring(entry.itemId), tostring(oldZone)))
+    addon:LootDebug(string.format("Removed invalid location: itemId=%s %s -> unknown (current map name did not match mapId)", tostring(entry.itemId), tostring(oldZone)))
     if not self.zoneRepairDryRun then
+      entry.lastMapId = nil
+      entry.lastContinent = nil
+      entry.lastZone = nil
+      entry.lastX = nil
+      entry.lastY = nil
       entry.lastZoneName = nil
       repairedZone = true
     end
@@ -403,10 +409,24 @@ function ItemScan:RepairStoredZoneNames(limit)
       end
     elseif isCurrentMapNameForDifferentMap(record) then
       local oldZone = record.zoneName or record.lastZoneName
-      addon:LootDebug(string.format("Zone repair preview: mapId=%s %s -> unknown (current map name did not match mapId)", tostring(recordMapId), tostring(oldZone)))
+      addon:LootDebug(string.format("Removed invalid location: mapId=%s %s -> unknown (current map name did not match mapId)", tostring(recordMapId), tostring(oldZone)))
       if not self.zoneRepairDryRun then
-        record.zoneName = nil
-        record.lastZoneName = nil
+        if record.lastMapId then
+          record.lastMapId = nil
+          record.lastContinent = nil
+          record.lastZone = nil
+          record.lastX = nil
+          record.lastY = nil
+          record.lastZoneName = nil
+        else
+          record.mapId = nil
+          record.continent = nil
+          record.zone = nil
+          record.x = nil
+          record.y = nil
+          record.zoneName = nil
+          record.lastZoneName = nil
+        end
         repaired = repaired + 1
       end
     else
@@ -474,6 +494,8 @@ function ItemScan:QueuePendingItem(itemLink, sourceType, context)
     zone = storedZone,
     zoneName = storedZoneName,
     upgradeLevel = context and context.upgradeLevel or nil,
+    isWorldforged = context and context.isWorldforged or nil,
+    upgradeCandidate = context and context.upgradeCandidate or nil,
   }
 
   addon.DB:UpsertPendingItem(pendingKey, payload)
@@ -489,6 +511,9 @@ function ItemScan:QueuePendingItem(itemLink, sourceType, context)
     tostring(payload.x or "?"),
     tostring(payload.y or "?")
   ))
+  if payload.upgradeCandidate then
+    addon:LootDebug("Stored as hidden upgrade candidate until vendor confirmation.")
+  end
   return self:FinalizePendingRecord(payload)
 end
 

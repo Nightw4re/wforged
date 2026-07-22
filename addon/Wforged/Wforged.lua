@@ -63,6 +63,15 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "mapdebug" or command == "debugmap" then
+    if addon.DebugOpenMapZone then
+      addon:DebugOpenMapZone()
+    else
+      addon:PrintError("Open map debug is not available yet.")
+    end
+    return
+  end
+
   if command == "update" or command == "check" or command == "checkupdate" then
     addon:Print("Installed version: " .. tostring(addon.version or "unknown"))
     addon:Print("Check CurseForge for the latest release: " .. addon.curseForgeURL)
@@ -192,13 +201,31 @@ registerEvent("LOOT_OPENED", function(self)
     self.AutoConfirm.lootScanUntil = GetTime() + 2
   end
   local hasWorldforged = false
+  local lootMapId, lootX, lootY = self:GetPlayerPosition()
+  local lootContinent = GetCurrentMapContinent and GetCurrentMapContinent() or nil
+  local lootZone = GetCurrentMapZone and GetCurrentMapZone() or nil
+  local lootZoneName = GetRealZoneText and GetRealZoneText() or GetZoneText and GetZoneText() or nil
+  if self.ResolveZoneName then
+    lootZoneName = self:ResolveZoneName(lootMapId, lootContinent, lootZone, lootZoneName)
+  end
   if GetNumLootItems and GetLootSlotLink then
     for slot = 1, GetNumLootItems() do
       local itemLink = GetLootSlotLink(slot)
       if itemLink then
         self:LootDebug("LOOT_OPENED slot item: " .. tostring(itemLink))
-        if self.ItemScan:IsWorldforgedItem(itemLink, true) then
-          hasWorldforged = true
+        local isWorldforged = self.ItemScan:IsWorldforgedItem(itemLink, true)
+        if isWorldforged or itemLink then
+          hasWorldforged = hasWorldforged or isWorldforged
+          self.ItemScan:QueuePendingItem(itemLink, "loot-opened", {
+            isWorldforged = isWorldforged,
+            upgradeCandidate = not isWorldforged,
+            mapId = lootMapId,
+            x = lootX,
+            y = lootY,
+            continent = lootContinent,
+            zone = lootZone,
+            zoneName = lootZoneName,
+          })
           break
         end
       end
