@@ -112,6 +112,11 @@ end
 registerEvent("PLAYER_LOGIN", function(self)
   self.DB:Init()
   self.Sync:Init()
+  if WforgedBundledData and WforgedBundledDataVersion and self.DB.data.meta.bundledDataVersion ~= WforgedBundledDataVersion then
+    self.Sync:Import(WforgedBundledData)
+    self.DB.data.meta.bundledDataVersion = WforgedBundledDataVersion
+    self:Print("Bundled database imported.")
+  end
   self.MinimapButton:Create()
   if self.DB:GetSummary().items == 0 and self.ItemScan.ScanPlayerItems then
     self.ItemScan:ScanPlayerItems()
@@ -124,6 +129,11 @@ registerEvent("PLAYER_LOGIN", function(self)
   else
     self:LootDebug("AutoConfirm module missing.")
   end
+  if C_Timer and C_Timer.After and self.ItemScan and self.ItemScan.RepairStoredItems then
+    C_Timer.After(5, function()
+      self.ItemScan:RepairStoredItems()
+    end)
+  end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
     frame.elapsed = (frame.elapsed or 0) + elapsed
     frame.vendorElapsed = (frame.vendorElapsed or 0) + elapsed
@@ -131,6 +141,9 @@ registerEvent("PLAYER_LOGIN", function(self)
       frame.elapsed = 0
       if self.AutoConfirm and self.AutoConfirm.TryConfirm then
         self.AutoConfirm:TryConfirm()
+      end
+      if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
+        self.ItemScan:RepairStoredItems(nil, 1)
       end
       if self.Sync and self.Sync.ProcessImportQueue then
         self.Sync:ProcessImportQueue(0.2)
@@ -158,7 +171,7 @@ end)
 
 registerEvent("CHAT_MSG_LOOT", function(self, message)
   local foundWorldforged = self.ItemScan:CaptureLootMessage(message)
-  if foundWorldforged and self.AutoConfirm and self.AutoConfirm.SetLootContext then
+  if foundWorldforged and self.AutoConfirm and self.AutoConfirm.lootWindowOpen and self.AutoConfirm.SetLootContext then
     self.AutoConfirm:SetLootContext(true)
     self.AutoConfirm:TryConfirm()
   end
@@ -167,6 +180,7 @@ end)
 registerEvent("LOOT_OPENED", function(self)
   self:LootDebug("LOOT_OPENED fired.")
   if self.AutoConfirm then
+    self.AutoConfirm.lootWindowOpen = true
     self.AutoConfirm.hasWorldforgedLoot = false
     self.AutoConfirm.lastSeenPopupKey = nil
     self.AutoConfirm.lootScanUntil = GetTime() + 2
@@ -195,6 +209,12 @@ end)
 
 registerEvent("LOOT_CLOSED", function(self)
   self:LootDebug("LOOT_CLOSED fired.")
+  if self.AutoConfirm then
+    self.AutoConfirm.lootWindowOpen = false
+    self.AutoConfirm.hasWorldforgedLoot = false
+    self.AutoConfirm.lootScanUntil = nil
+    self.AutoConfirm.lastSeenPopupKey = nil
+  end
   if self.AutoConfirm and self.AutoConfirm.SetLootContext then
     self.AutoConfirm:SetLootContext(false)
   end
@@ -202,6 +222,9 @@ end)
 
 registerEvent("GET_ITEM_INFO_RECEIVED", function(self, itemId)
   self.ItemScan:RetryPendingItems(itemId)
+  if self.ItemScan.RepairStoredItems then
+    self.ItemScan:RepairStoredItems(itemId)
+  end
   if self.Sync and self.Sync.RefreshItemInfo then
     self.Sync:RefreshItemInfo(itemId)
   end

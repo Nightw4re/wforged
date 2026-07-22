@@ -152,8 +152,8 @@ local function ensureMapPin()
   local pin = CreateFrame("Button", "WforgedMapPin", WorldMapFrame)
   pin:SetWidth(30)
   pin:SetHeight(30)
-  pin:SetFrameStrata("TOOLTIP")
-  pin:SetFrameLevel(1000)
+  pin:SetFrameStrata("HIGH")
+  pin:SetFrameLevel(50)
 
   pin.shadow = pin:CreateTexture(nil, "BACKGROUND")
   pin.shadow:SetPoint("TOPLEFT", 1, -1)
@@ -392,8 +392,8 @@ function addon.MapNotes:RefreshAllMarkers()
       if not marker then
         marker = CreateFrame("Button", nil, WorldMapDetailFrame)
         marker:SetSize(16, 16)
-        marker:SetFrameStrata("TOOLTIP")
-        marker:SetFrameLevel(900)
+        marker:SetFrameStrata("HIGH")
+        marker:SetFrameLevel(50)
         marker.texture = marker:CreateTexture(nil, "BACKGROUND")
         marker.texture:SetAllPoints(marker)
         marker.texture:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -722,7 +722,6 @@ function addon.AutoConfirm:RequestDebugScan(reason)
 end
 
 function addon.AutoConfirm:SetLootContext(hasWorldforged)
-  local settings = addon.DB and addon.DB.GetSettings and addon.DB:GetSettings()
   self.hasWorldforgedLoot = hasWorldforged and true or false
   if self.hasWorldforgedLoot then
     self:RequestDebugScan("worldforged-loot-opened")
@@ -814,15 +813,14 @@ function addon.AutoConfirm:TryNonStaticPopupConfirm()
     return true
   end
 
-  if tryNamedButton("LootFrame", "OkayButton") then
-    addon:LootDebug("Auto-confirm via LootFrameOkayButton")
-    return true
-  end
-
   return false
 end
 
 function addon.AutoConfirm:TryConfirm()
+  if not self.lootWindowOpen then
+    return false
+  end
+
   local sawPopup = false
   if self.lootScanUntil and GetTime() <= self.lootScanUntil and not self.hasWorldforgedLoot then
     self:ScanOpenLootSlots()

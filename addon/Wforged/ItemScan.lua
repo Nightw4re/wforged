@@ -217,6 +217,77 @@ function ItemScan:FinalizePendingRecord(record)
   return fingerprint
 end
 
+function ItemScan:RepairStoredItem(itemId, entry)
+  if not itemId or not entry or not GetItemInfo then
+    return false
+  end
+
+  local itemName, itemLink, quality, itemLevel, _, _, _, _, _, itemTexture = GetItemInfo(itemId)
+  if not isItemInfoReady(itemName, itemLevel) or not itemLink then
+    return false
+  end
+
+  local statsText, tooltipText = collectTooltipData(itemLink)
+  entry.itemId = tonumber(itemId) or itemId
+  entry.itemLink = itemLink
+  entry.itemName = itemName
+  entry.quality = quality
+  entry.itemLevel = itemLevel
+  entry.effectiveLevel = entry.effectiveLevel or itemLevel
+  entry.itemTexture = itemTexture
+  entry.statsText = entry.statsText or statsText
+  entry.tooltipText = entry.tooltipText or tooltipText
+  entry.isWorldforged = true
+  return true
+end
+
+function ItemScan:RepairStoredItems(itemId, limit)
+  if not addon.DB or not addon.DB.data then
+    return 0
+  end
+
+  if itemId then
+    limit = limit or 1
+  else
+    if not self.repairQueueInitialized then
+      self.repairQueue = {}
+      for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+        if entry.itemId and (not entry.itemLink or not entry.itemLevel or not entry.quality) then
+          self.repairQueue[#self.repairQueue + 1] = entry
+        end
+      end
+      self.repairQueueInitialized = true
+    end
+  end
+
+  local repaired = 0
+  if itemId then
+    for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+      if tonumber(entry.itemId) == tonumber(itemId) and self:RepairStoredItem(entry.itemId, entry) then
+        repaired = 1
+        break
+      end
+    end
+  else
+    for _ = 1, (limit or 1) do
+      local entry = table.remove(self.repairQueue, 1)
+      if not entry then break end
+      if self:RepairStoredItem(entry.itemId, entry) then
+        repaired = repaired + 1
+        addon:LootDebug(string.format("Repaired stored item metadata: id=%s name=%s level=%s quality=%s", tostring(entry.itemId), tostring(entry.itemName), tostring(entry.itemLevel), tostring(entry.quality)))
+      end
+    end
+  end
+
+  if repaired > 0 and addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+    addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+  end
+  if repaired > 0 and addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+    addon.MapNotes:RefreshAllMarkers()
+  end
+  return repaired
+end
+
 function ItemScan:QueuePendingItem(itemLink, sourceType, context)
   if not itemLink then
     return nil
