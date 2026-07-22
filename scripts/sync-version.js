@@ -6,10 +6,15 @@ const packageJson = require(path.join(repoRoot, "package.json"));
 const tocPath = path.join(repoRoot, "addon", "Wforged", "Wforged.toc");
 const version = String(packageJson.version);
 const toc = fs.readFileSync(tocPath, "utf8");
-const updated = toc.replace(/^## Version:.*$/m, `## Version: ${version}`);
+const versionLine = `## Version: ${version}`;
+let updated = toc.replace(/^## Version:[^\r\n]*\r?$/m, versionLine);
+
+if (updated === toc && !/^## Version:/m.test(toc)) {
+  updated = toc.replace(/^(## Author:[^\r\n]*\r?\n)/m, `$1${versionLine}\n`);
+}
 
 if (updated === toc) {
-  throw new Error(`Missing ## Version entry in ${tocPath}`);
+  throw new Error(`Could not update addon version in ${tocPath}`);
 }
 
 if (updated !== toc) {
