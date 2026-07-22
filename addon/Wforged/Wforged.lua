@@ -112,6 +112,11 @@ end
 registerEvent("PLAYER_LOGIN", function(self)
   self.DB:Init()
   self.Sync:Init()
+  if WforgedBundledData and WforgedBundledDataVersion and self.DB.data.meta.bundledDataVersion ~= WforgedBundledDataVersion then
+    self.Sync:Import(WforgedBundledData)
+    self.DB.data.meta.bundledDataVersion = WforgedBundledDataVersion
+    self:Print("Bundled database imported.")
+  end
   self.MinimapButton:Create()
   if self.DB:GetSummary().items == 0 and self.ItemScan.ScanPlayerItems then
     self.ItemScan:ScanPlayerItems()
@@ -136,6 +141,9 @@ registerEvent("PLAYER_LOGIN", function(self)
       frame.elapsed = 0
       if self.AutoConfirm and self.AutoConfirm.TryConfirm then
         self.AutoConfirm:TryConfirm()
+      end
+      if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
+        self.ItemScan:RepairStoredItems(nil, 1)
       end
       if self.Sync and self.Sync.ProcessImportQueue then
         self.Sync:ProcessImportQueue(0.2)

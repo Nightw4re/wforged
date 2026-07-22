@@ -7,6 +7,7 @@
     "prebuild": "node scripts/sync-version.js",
     "unit": "node --test test/*.test.js",
     "test": "npm run check && npm run unit && npm run deploy",
+    "bundle-data": "luajit scripts/export-bundled-data.lua",
     "deploy": "node scripts/deploy-addon.js",
     "check": "node scripts/check-addon.js",
     "build": "node scripts/build-addon.js"

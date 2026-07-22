@@ -241,14 +241,37 @@ function ItemScan:RepairStoredItem(itemId, entry)
   return true
 end
 
-function ItemScan:RepairStoredItems(itemId)
+function ItemScan:RepairStoredItems(itemId, limit)
   if not addon.DB or not addon.DB.data then
     return 0
   end
 
+  if itemId then
+    limit = limit or 1
+  else
+    if not self.repairQueueInitialized then
+      self.repairQueue = {}
+      for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+        if entry.itemId and (not entry.itemLink or not entry.itemLevel or not entry.quality) then
+          self.repairQueue[#self.repairQueue + 1] = entry
+        end
+      end
+      self.repairQueueInitialized = true
+    end
+  end
+
   local repaired = 0
-  for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
-    if entry.itemId and (not entry.itemLink or not entry.itemLevel or not entry.quality) and (not itemId or tonumber(entry.itemId) == tonumber(itemId)) then
+  if itemId then
+    for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+      if tonumber(entry.itemId) == tonumber(itemId) and self:RepairStoredItem(entry.itemId, entry) then
+        repaired = 1
+        break
+      end
+    end
+  else
+    for _ = 1, (limit or 1) do
+      local entry = table.remove(self.repairQueue, 1)
+      if not entry then break end
       if self:RepairStoredItem(entry.itemId, entry) then
         repaired = repaired + 1
         addon:LootDebug(string.format("Repaired stored item metadata: id=%s name=%s level=%s quality=%s", tostring(entry.itemId), tostring(entry.itemName), tostring(entry.itemLevel), tostring(entry.quality)))
