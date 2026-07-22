@@ -145,6 +145,7 @@ jobs:
         env:
           CURSEFORGE_API_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
           CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID || secrets.CURSEFORGE_PROJECT_ID }}
+          CURSEFORGE_GAME_VERSION_ID: ${{ vars.CURSEFORGE_GAME_VERSION_ID || secrets.CURSEFORGE_GAME_VERSION_ID }}
           RELEASE_VERSION: v${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
@@ -160,12 +161,21 @@ jobs:
             echo "CURSEFORGE_PROJECT_ID must be numeric, got: ${CURSEFORGE_PROJECT_ID}"
             exit 1
           fi
+          if [ -z "${CURSEFORGE_GAME_VERSION_ID}" ]; then
+            echo "CURSEFORGE_GAME_VERSION_ID is missing. Add the numeric CurseForge ID for WoW 3.3.5 as a repository variable."
+            exit 1
+          fi
+          if ! [[ "${CURSEFORGE_GAME_VERSION_ID}" =~ ^[0-9]+$ ]]; then
+            echo "CURSEFORGE_GAME_VERSION_ID must be numeric, got: ${CURSEFORGE_GAME_VERSION_ID}"
+            exit 1
+          fi
           archive="release/Wforged-${{ needs.build.outputs.version }}.zip"
           changelog="$(cat release/CHANGELOG_RELEASE.md)"
           metadata="$(jq -cn \
             --arg displayName "Wforged ${RELEASE_VERSION}" \
             --arg changelog "$changelog" \
-            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown", releaseType: "release", gameVersions: ["3.3.5"]}')"
+            --argjson gameVersionId "${CURSEFORGE_GAME_VERSION_ID}" \
+            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown", releaseType: "release", gameVersions: [$gameVersionId]}')"
           curl --fail-with-body --retry 3 \
             -X POST \
             -H "x-api-token: ${CURSEFORGE_API_TOKEN}" \
