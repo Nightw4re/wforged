@@ -72,6 +72,115 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "repair-zones" then
+    if addon.ItemScan then
+      addon.ItemScan.zoneRepairInteractive = not addon.ItemScan.zoneRepairInteractive
+      addon:Print("Zone map repair mode: " .. (addon.ItemScan.zoneRepairInteractive and "enabled; open incorrect maps" or "disabled"))
+    else
+      addon:PrintError("Zone map repair is not available.")
+    end
+    return
+  end
+
+  local mapInfoId = command:match("^map%-info%s+(%d+)$")
+  if mapInfoId then
+    local mapId = tonumber(mapInfoId)
+    local currentId = GetCurrentMapAreaID and GetCurrentMapAreaID() or nil
+    local currentName = GetMapInfo and GetMapInfo() or nil
+    local byId = GetMapNameByID and GetMapNameByID(mapId) or nil
+    local resolved = addon.ResolveZoneName and addon:ResolveZoneName(mapId, nil, nil, nil) or nil
+    addon:Print(string.format(
+      "Map info id=%s currentId=%s currentName=%s GetMapNameByID=%s resolved=%s",
+      tostring(mapId), tostring(currentId or "nil"), tostring(currentName or "nil"),
+      tostring(byId or "nil"), tostring(resolved or "nil")
+    ))
+    local function probeMapFunction(name, fn)
+      if not fn then return end
+      local ok, value = pcall(fn)
+      addon:Print(string.format("Map info %s()=%s", name, tostring(ok and value or "error")))
+      local okWithId, valueWithId = pcall(fn, mapId)
+      addon:Print(string.format("Map info %s(%d)=%s", name, mapId, tostring(okWithId and valueWithId or "error")))
+    end
+    probeMapFunction("GetActiveMapID", GetActiveMapID)
+    probeMapFunction("GetActiveMapName", GetActiveMapName)
+    probeMapFunction("GetMapID", GetMapID)
+    probeMapFunction("GetWorldMapAreaID", GetWorldMapAreaID)
+    probeMapFunction("GetZoneId", GetZoneId)
+    if GetMapName then
+      for candidate = mapId - 1, mapId + 1 do
+        addon:Print(string.format("Map info GetMapName(%d)=%s", candidate, tostring(GetMapName(candidate) or "nil")))
+      end
+    end
+    if SetMapByID and C_Timer and C_Timer.After then
+      SetMapByID(mapId)
+      C_Timer.After(0.5, function()
+        local loadedName = GetMapInfo and GetMapInfo() or nil
+        addon:Print(string.format(
+          "Map info loaded id=%s name=%s continent=%s zone=%s zoneName=%s",
+          tostring(GetCurrentMapAreaID and GetCurrentMapAreaID() or "nil"),
+          tostring(loadedName or "nil"),
+          tostring(GetCurrentMapContinent and GetCurrentMapContinent() or "nil"),
+          tostring(GetCurrentMapZone and GetCurrentMapZone() or "nil"),
+          tostring(GetCurrentMapContinent and GetCurrentMapZone and GetMapZones and ({ GetMapZones(GetCurrentMapContinent()) })[GetCurrentMapZone()] or "nil")
+        ))
+        if currentId then
+          SetMapByID(currentId)
+        end
+      end)
+    else
+      addon:Print("Map info probe unavailable: SetMapByID or C_Timer.After missing.")
+    end
+    return
+  end
+
+  local mapFunctionsPage = command:match("^map%-functions%s*(%d*)$")
+  if mapFunctionsPage then
+    local names = {}
+    for name, value in pairs(_G) do
+      if type(value) == "function" and (name:lower():find("map", 1, true) or name:lower():find("zone", 1, true)) then
+        names[#names + 1] = name
+      end
+    end
+    table.sort(names)
+    local pageSize = 20
+    local page = math.max(1, tonumber(mapFunctionsPage) or 1)
+    local pageCount = math.max(1, math.ceil(#names / pageSize))
+    page = math.min(page, pageCount)
+    addon:Print(string.format("Map/zone functions page %d/%d:", page, pageCount))
+    local first = (page - 1) * pageSize + 1
+    local last = math.min(first + pageSize - 1, #names)
+    for index = first, last do
+      local name = names[index]
+      addon:Print("  " .. name)
+    end
+    return
+  end
+
+  local mapZonesQuery = command:match("^map%-zones%s*(.*)$")
+  if mapZonesQuery then
+    mapZonesQuery = string.lower(strtrim(mapZonesQuery or ""))
+    if not GetMapContinents or not GetMapZones then
+      addon:Print("Map zone list is unavailable in this client.")
+      return
+    end
+    local continents = { GetMapContinents() }
+    local found = 0
+    for continent, continentName in ipairs(continents) do
+      local zones = { GetMapZones(continent) }
+      for zone, zoneName in ipairs(zones) do
+        if mapZonesQuery == "" or string.lower(tostring(zoneName or "")):find(mapZonesQuery, 1, true) then
+          found = found + 1
+          addon:Print(string.format(
+            "Map zone: continent=%d zone=%d name=%s",
+            continent, zone, tostring(zoneName or "nil")
+          ))
+        end
+      end
+    end
+    addon:Print(string.format("Map zone matches: %d", found))
+    return
+  end
+
   if command == "update" or command == "check" or command == "checkupdate" then
     addon:Print("Installed version: " .. tostring(addon.version or "unknown"))
     addon:Print("Check CurseForge for the latest release: " .. addon.curseForgeURL)
@@ -193,10 +302,7 @@ registerEvent("PLAYER_LOGIN", function(self)
   end
   if C_Timer and C_Timer.After and self.ItemScan and self.ItemScan.RepairStoredItems then
     C_Timer.After(5, function()
-      local repaired = self.ItemScan:RepairStoredItems(nil, 1)
-      if repaired == 0 then
-        self.ItemScan:RepairStoredZoneNames(1)
-      end
+      self.ItemScan:RepairStoredItems(nil, 1)
     end)
   end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
@@ -209,9 +315,6 @@ registerEvent("PLAYER_LOGIN", function(self)
       end
       if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
         local repaired = self.ItemScan:RepairStoredItems(nil, 1)
-        if repaired == 0 and self.ItemScan.zoneRepairQueue and self.ItemScan.RepairStoredZoneNames then
-          self.ItemScan:RepairStoredZoneNames(1)
-        end
       end
       if self.ItemScan and self.ItemScan.RetryPendingItems then
         self.ItemScan:RetryPendingItems(nil, 1)

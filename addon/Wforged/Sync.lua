@@ -59,21 +59,11 @@ local function decodePayload(fields)
   local observedAt = hasLocation and fields[6] or fields[3]
   local realm = hasLocation and fields[7] or fields[4]
   local mapId = hasLocation and tonumber(fields[3]) or nil
-  local zoneName = mapId and GetMapNameByID and GetMapNameByID(mapId) or nil
-  if not zoneName and mapId and addon.ResolveZoneName then
-    zoneName = addon:ResolveZoneName(mapId, nil, nil, nil)
-  end
-  local knownZoneNames = {
-    [15] = "The Deadmines",
-    [35] = "Duskwood",
-    [40] = "Westfall",
-  }
-  zoneName = zoneName or (mapId and knownZoneNames[mapId]) or nil
   return {
     fingerprint = string.format("id:%d", itemId or 0),
     itemId = itemId, itemName = itemName, itemLink = itemLink,
     itemTexture = itemTexture, quality = quality, itemLevel = itemLevel,
-    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId, zoneName = zoneName,
+    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId,
     x = hasLocation and tonumber(fields[4]) or nil, y = hasLocation and tonumber(fields[5]) or nil,
     observedAt = tonumber(observedAt) or time(), isWorldforged = true, realm = realm ~= "" and realm or "Unknown",
   }
@@ -286,6 +276,9 @@ function Sync:ProcessImportQueue(elapsed)
     self.pendingImports = {}
     self.pendingImportIndex = 1
     addon:Print("Import complete: " .. tostring(total) .. " items processed.")
+    if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
+      addon.ItemScan:ResetZoneNameRepair()
+    end
     if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
       addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
     end
@@ -401,6 +394,9 @@ function Sync:MergeRemoteItem(payload)
     local stored = addon.DB:RecordItemObservation(payload)
     if addon.ItemScan and addon.ItemScan.RepairStoredItems then
       addon.ItemScan:RepairStoredItems(payload.itemId)
+    end
+    if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
+      addon.ItemScan:ResetZoneNameRepair()
     end
     addon:LootDebug(string.format("Import stored: id=%s name=%s map=%s x=%s y=%s quality=%s level=%s", tostring(payload.itemId), tostring(stored and stored.itemName or payload.itemName), tostring(stored and stored.lastMapId), tostring(stored and stored.lastX), tostring(stored and stored.lastY), tostring(stored and stored.quality), tostring(stored and stored.itemLevel)))
     return true
