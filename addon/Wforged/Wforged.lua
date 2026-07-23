@@ -63,6 +63,15 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "mapdebug" or command == "debugmap" then
+    if addon.DebugOpenMapZone then
+      addon:DebugOpenMapZone()
+    else
+      addon:PrintError("Open map debug is not available yet.")
+    end
+    return
+  end
+
   if command == "update" or command == "check" or command == "checkupdate" then
     addon:Print("Installed version: " .. tostring(addon.version or "unknown"))
     addon:Print("Check CurseForge for the latest release: " .. addon.curseForgeURL)
@@ -78,6 +87,59 @@ local function handleSlashCommand(message)
   if command == "reset" then
     addon:ResetDatabase()
     addon:Print("Database reset. Use /reload or log out to save the empty database.")
+    return
+  end
+
+  if command == "cleanup" or command == "cleanup confirm" then
+    addon:Print("Cleanup is temporarily disabled. No data was changed.")
+    return
+  end
+
+  local inspectId = command:match("^inspect%s+(%d+)$")
+  if inspectId then
+    local found = 0
+    for fingerprint, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+      if tonumber(entry.itemId) == tonumber(inspectId) then
+        found = found + 1
+        addon:Print(string.format(
+          "Inspect id=%s name=%s realm=%s source=%s upgrade=%s map=%s continent=%s zone=%s zoneName=%s x=%s y=%s quality=%s level=%s",
+          tostring(entry.itemId), tostring(entry.itemName or "?"), tostring(entry.realm or "?"),
+          tostring(entry.lastSource or "?"), tostring(entry.isUpgrade or entry.upgradeLevel or 0),
+          tostring(entry.lastMapId or "nil"), tostring(entry.lastContinent or "nil"),
+          tostring(entry.lastZone or "nil"), tostring(entry.lastZoneName or "nil"),
+          tostring(entry.lastX or "nil"), tostring(entry.lastY or "nil"),
+          tostring(entry.quality or "nil"), tostring(entry.itemLevel or "nil")
+        ))
+        addon:LootDebug("Inspect fingerprint: " .. tostring(fingerprint))
+      end
+    end
+    addon:Print(string.format("Inspect found %d variant(s).", found))
+    return
+  end
+
+  local removeId = command:match("^remove%s+(%d+)$")
+  if removeId then
+    local removed = addon.DB:RemoveItemById(removeId)
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
+    if addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+      addon.MapNotes:RefreshAllMarkers()
+    end
+    addon:Print(string.format("Removed item %s (%d variants).", removeId, removed))
+    return
+  end
+
+  local removeName = rawMessage:match('^remove%-name%s+(.+)$')
+  if removeName and removeName ~= "" then
+    local removed = addon.DB:RemoveItemsByName(removeName)
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
+    if addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+      addon.MapNotes:RefreshAllMarkers()
+    end
+    addon:Print(string.format("Removed item name %s (%d variants).", removeName, removed))
     return
   end
 
@@ -131,7 +193,10 @@ registerEvent("PLAYER_LOGIN", function(self)
   end
   if C_Timer and C_Timer.After and self.ItemScan and self.ItemScan.RepairStoredItems then
     C_Timer.After(5, function()
-      self.ItemScan:RepairStoredItems()
+      local repaired = self.ItemScan:RepairStoredItems(nil, 1)
+      if repaired == 0 then
+        self.ItemScan:RepairStoredZoneNames(1)
+      end
     end)
   end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
@@ -143,7 +208,16 @@ registerEvent("PLAYER_LOGIN", function(self)
         self.AutoConfirm:TryConfirm()
       end
       if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
-        self.ItemScan:RepairStoredItems(nil, 1)
+        local repaired = self.ItemScan:RepairStoredItems(nil, 1)
+        if repaired == 0 and self.ItemScan.zoneRepairQueue and self.ItemScan.RepairStoredZoneNames then
+          self.ItemScan:RepairStoredZoneNames(1)
+        end
+      end
+      if self.ItemScan and self.ItemScan.RetryPendingItems then
+        self.ItemScan:RetryPendingItems(nil, 1)
+      end
+      if self.SearchUI and self.SearchUI.UpdateRepairIndicator then
+        self.SearchUI:UpdateRepairIndicator()
       end
       if self.Sync and self.Sync.ProcessImportQueue then
         self.Sync:ProcessImportQueue(0.2)
@@ -186,13 +260,31 @@ registerEvent("LOOT_OPENED", function(self)
     self.AutoConfirm.lootScanUntil = GetTime() + 2
   end
   local hasWorldforged = false
+  local lootMapId, lootX, lootY = self:GetPlayerPosition()
+  local lootContinent = GetCurrentMapContinent and GetCurrentMapContinent() or nil
+  local lootZone = GetCurrentMapZone and GetCurrentMapZone() or nil
+  local lootZoneName = GetRealZoneText and GetRealZoneText() or GetZoneText and GetZoneText() or nil
+  if self.ResolveZoneName then
+    lootZoneName = self:ResolveZoneName(lootMapId, lootContinent, lootZone, lootZoneName)
+  end
   if GetNumLootItems and GetLootSlotLink then
     for slot = 1, GetNumLootItems() do
       local itemLink = GetLootSlotLink(slot)
       if itemLink then
         self:LootDebug("LOOT_OPENED slot item: " .. tostring(itemLink))
-        if self.ItemScan:IsWorldforgedItem(itemLink, true) then
-          hasWorldforged = true
+        local isWorldforged = self.ItemScan:IsWorldforgedItem(itemLink, true)
+        if isWorldforged or itemLink then
+          hasWorldforged = hasWorldforged or isWorldforged
+          self.ItemScan:QueuePendingItem(itemLink, "loot-opened", {
+            isWorldforged = isWorldforged,
+            upgradeCandidate = not isWorldforged,
+            mapId = lootMapId,
+            x = lootX,
+            y = lootY,
+            continent = lootContinent,
+            zone = lootZone,
+            zoneName = lootZoneName,
+          })
           break
         end
       end

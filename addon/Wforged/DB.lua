@@ -3,6 +3,54 @@ local addonName, addon = ...
 local DB = {}
 addon.DB = DB
 
+local function matchesWeaponFilter(haystack, weaponType)
+  local normalized = string.lower(weaponType or "")
+  local twoHandedType = normalized:match("^two%-handed (.+)$")
+  if twoHandedType then
+    return haystack:find("two-hand", 1, true) ~= nil
+      and haystack:find(twoHandedType, 1, true) ~= nil
+  end
+  return haystack:find(normalized, 1, true) ~= nil
+end
+
+local function hasBindOnPickup(entry)
+  return entry and string.lower(tostring(entry.tooltipText or "")):find("binds when picked up", 1, true) ~= nil
+end
+
+local function isUpgradeEntry(entry)
+  return entry and (entry.isUpgrade == true or (tonumber(entry.upgradeLevel or 0) or 0) > 0)
+end
+
+local function matchesItemType(haystack, itemType)
+  if not itemType or itemType == "" or itemType == "base" or itemType == "upgrade" then
+    return true
+  end
+  if itemType == "bags" then
+    return haystack:find("slot bag", 1, true) ~= nil
+      or haystack:find("slots bag", 1, true) ~= nil
+  end
+  if itemType == "food" then
+    return haystack:find("food", 1, true) ~= nil
+      or haystack:find("drink", 1, true) ~= nil
+      or haystack:find("consumable", 1, true) ~= nil
+  end
+  if itemType == "equipment" then
+    return haystack:find("requires level", 1, true) ~= nil
+      and (haystack:find("armor", 1, true) ~= nil
+        or haystack:find("weapon", 1, true) ~= nil
+        or haystack:find("one-hand", 1, true) ~= nil
+        or haystack:find("two-hand", 1, true) ~= nil
+        or haystack:find("finger", 1, true) ~= nil
+        or haystack:find("trinket", 1, true) ~= nil)
+  end
+  if itemType == "other" then
+    return not matchesItemType(haystack, "bags")
+      and not matchesItemType(haystack, "food")
+      and not matchesItemType(haystack, "equipment")
+  end
+  return true
+end
+
 local function ensureTable(root, key)
   if type(root[key]) ~= "table" then
     root[key] = {}
@@ -64,6 +112,12 @@ function DB:Init()
   if db.settings.receiveGuildUpdates == nil then db.settings.receiveGuildUpdates = true end
 
   self.data = db
+  local currentRealm = self:GetCurrentRealm()
+  for _, entry in pairs(db.itemsByFingerprint or {}) do
+    if entry and not entry.realm and entry.lastSource ~= "import" and entry.lastSource ~= "guild" then
+      entry.realm = currentRealm
+    end
+  end
   self:CleanupInvalidUpgradePlaceholders()
   self:CleanupInvalidUpgradeCosts()
   self:PurgeUnknownMapLocations()
@@ -127,6 +181,10 @@ end
 
 function DB:GetCharacterKey()
   return string.format("%s-%s", UnitName("player") or "unknown", GetRealmName() or "unknown")
+end
+
+function DB:GetCurrentRealm()
+  return (GetRealmName and GetRealmName()) or "Unknown"
 end
 
 function DB:CleanupInvalidUpgradePlaceholders()
@@ -318,17 +376,25 @@ function DB:RecordItemObservation(payload)
     firstSeenAt = time(),
     sources = {},
   }
+  payload.realm = payload.realm or self:GetCurrentRealm()
+  if entry.realm and entry.realm == self:GetCurrentRealm() and payload.realm ~= entry.realm
+    and (payload.sourceType == "import" or payload.sourceType == "guild") then
+    return entry
+  end
 
   entry.itemKey = itemKey
   entry.itemLink = payload.itemLink
   entry.itemName = payload.itemName
   entry.itemId = payload.itemId
   entry.itemTexture = payload.itemTexture
-  entry.isWorldforged = payload.isWorldforged and true or false
+  entry.isWorldforged = entry.isWorldforged or (payload.isWorldforged and true or false)
+  entry.upgradeCandidate = (not entry.isWorldforged) and (payload.upgradeCandidate and true or entry.upgradeCandidate) or nil
+  entry.realm = payload.realm
   entry.quality = payload.quality
   entry.itemLevel = payload.itemLevel
   entry.effectiveLevel = payload.effectiveLevel or payload.itemLevel
   entry.upgradeLevel = payload.upgradeLevel
+  entry.isUpgrade = entry.isUpgrade or (payload.isUpgrade and true or false)
   entry.statsText = payload.statsText
   entry.tooltipText = payload.tooltipText
   entry.lastSeenAt = payload.observedAt or time()
@@ -394,6 +460,22 @@ end
 function DB:RecordVendorUpgrade(payload)
   if not self.data or not payload.npcId or not payload.itemKey then
     return
+  end
+
+  local promoted = 0
+  for _, entry in pairs(self.data.itemsByFingerprint or {}) do
+    if tonumber(entry.itemId) == tonumber(payload.itemId) and entry.quality ~= 0 and hasBindOnPickup(entry) then
+      entry.isWorldforged = true
+      entry.isUpgrade = true
+      entry.upgradeCandidate = nil
+      promoted = promoted + 1
+    end
+  end
+  if promoted > 0 then
+    addon:LootDebug(string.format("Promoted upgrade candidate: itemId=%s variants=%d", tostring(payload.itemId), promoted))
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
   end
 
   local vendors = self.data.vendorsByNpcId
@@ -600,6 +682,106 @@ function DB:RemovePendingItem(pendingKey)
   end
 end
 
+function DB:RemoveItemById(itemId)
+  if not self.data or not tonumber(itemId) then
+    return 0
+  end
+
+  itemId = tonumber(itemId)
+  local removed = 0
+  local removedKeys = {}
+  for fingerprint, entry in pairs(self.data.itemsByFingerprint or {}) do
+    if entry and tonumber(entry.itemId) == itemId then
+      removed = removed + 1
+      removedKeys[entry.itemKey] = true
+      self.data.itemsByFingerprint[fingerprint] = nil
+      self.data.spawnPointsByItem[fingerprint] = nil
+    end
+  end
+
+  for itemKey in pairs(removedKeys) do
+    self.data.itemsByKey[itemKey] = nil
+    self.data.upgradeCostsByItem[itemKey] = nil
+    self.data.upgradeSourcesByItem[itemKey] = nil
+  end
+
+  for key, observation in pairs(self.data.observations or {}) do
+    if observation and tonumber(observation.itemId) == itemId then
+      self.data.observations[key] = nil
+    end
+  end
+
+  for pendingKey, pending in pairs(self.data.pendingItems or {}) do
+    local pendingId = pending and pending.itemId
+    if not pendingId and type(pendingKey) == "string" then
+      pendingId = pendingKey:match("item:(%d+)")
+    end
+    if tonumber(pendingId) == itemId then
+      self.data.pendingItems[pendingKey] = nil
+    end
+  end
+
+  return removed
+end
+
+function DB:RemoveItemsByName(itemName)
+  if not self.data or not itemName or itemName == "" then
+    return 0
+  end
+  local target = string.lower(itemName)
+  local removed = 0
+  local ids = {}
+  for _, entry in pairs(self.data.itemsByFingerprint or {}) do
+    if entry and string.lower(tostring(entry.itemName or "")) == target and entry.itemId then
+      ids[tonumber(entry.itemId)] = true
+    end
+  end
+  for itemId in pairs(ids) do
+    removed = removed + self:RemoveItemById(itemId)
+  end
+  return removed
+end
+
+function DB:CleanupInvalidItems(apply)
+  if not self.data then return 0 end
+  local removeIds = {}
+  local baseCount, upgradeCount = 0, 0
+  for _, entry in pairs(self.data.itemsByFingerprint or {}) do
+    local upgradeInfo = self:GetUpgradeInfo(entry.itemKey)
+    local hasUpgradeSource = self.data.upgradeSourcesByItem[entry.itemKey] ~= nil
+    local isUpgrade = entry.isUpgrade == true
+      or (tonumber(entry.upgradeLevel or 0) or 0) > 0
+      or upgradeInfo ~= nil
+      or hasUpgradeSource
+    local mapId = tonumber(entry.lastMapId)
+    local x = tonumber(entry.lastX)
+    local y = tonumber(entry.lastY)
+    local hasLocation = mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
+    local hasCorruptLocation = (entry.lastMapId ~= nil and not mapId)
+      or (entry.lastX ~= nil and (not x or x < 0 or x > 1))
+      or (entry.lastY ~= nil and (not y or y < 0 or y > 1))
+    local hasUpgradeCost = entry.upgradeCost ~= nil or (upgradeInfo and upgradeInfo.cost ~= nil)
+    if entry.itemId and entry.isWorldforged == true
+      and ((not isUpgrade and hasCorruptLocation) or (isUpgrade and not hasUpgradeCost)) then
+      local id = tonumber(entry.itemId)
+      if not removeIds[id] then
+        removeIds[id] = isUpgrade and "upgrade" or "base"
+        if isUpgrade then upgradeCount = upgradeCount + 1 else baseCount = baseCount + 1 end
+      end
+    end
+  end
+
+  local removed = 0
+  for itemId in pairs(removeIds) do
+    if apply then
+      removed = removed + self:RemoveItemById(itemId)
+    else
+      removed = removed + 1
+    end
+  end
+  return removed, baseCount, upgradeCount
+end
+
 function DB:GetSettings()
   if not self.data then
     return {
@@ -665,11 +847,28 @@ function DB:SearchItems(query, filters)
   end
 
   for itemKey, bucket in pairs(self.data.itemsByKey) do
+    local hasUpgradeInfo = self:GetUpgradeInfo(itemKey) ~= nil
     local fingerprint = self:GetPreferredFingerprint(itemKey, bucket)
+    if filters.variant == "base" or filters.variant == "upgrade" then
+      local wantUpgrade = filters.variant == "upgrade"
+      for _, variant in pairs(bucket.variants or {}) do
+        local candidateFingerprint = variant and variant.fingerprint
+        local candidate = candidateFingerprint and self.data.itemsByFingerprint[candidateFingerprint]
+        local isUpgrade = isUpgradeEntry(candidate) or hasUpgradeInfo
+        if candidate and isUpgrade == wantUpgrade then
+          fingerprint = candidateFingerprint
+          break
+        end
+      end
+    end
     local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
     if entry then
+      local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
+        entry.lastMapId, entry.lastContinent, entry.lastZone, entry.lastZoneName
+      ) or entry.lastZoneName
       local haystack = string.lower(table.concat({
         bucket.itemName or "",
+        zoneName or "",
         entry.statsText or "",
         entry.tooltipText or "",
         tostring(entry.itemLevel or ""),
@@ -688,7 +887,7 @@ function DB:SearchItems(query, filters)
       if matches and filters.armorType and filters.armorType ~= "" and not haystack:find(string.lower(filters.armorType), 1, true) then
         matches = false
       end
-      if matches and filters.weaponType and filters.weaponType ~= "" and not haystack:find(string.lower(filters.weaponType), 1, true) then
+      if matches and filters.weaponType and filters.weaponType ~= "" and not matchesWeaponFilter(haystack, filters.weaponType) then
         matches = false
       end
       if matches and filters.quality and filters.quality ~= "" then
@@ -708,17 +907,31 @@ function DB:SearchItems(query, filters)
       end
       if matches and filters.level and filters.level ~= "" then
         local level = tonumber(entry.itemLevel or entry.effectiveLevel or 0) or 0
-        if filters.level == "upgrade" and (entry.upgradeLevel or 0) <= 0 then
+        local entryIsUpgrade = isUpgradeEntry(entry) or hasUpgradeInfo
+        if filters.level == "upgrade" and not entryIsUpgrade then
           matches = false
-        elseif filters.level == "base" and (entry.upgradeLevel or 0) > 0 then
+        elseif filters.level == "base" and entryIsUpgrade then
           matches = false
         elseif tonumber(filters.level) and level < tonumber(filters.level) then
           matches = false
         end
       end
+      if matches and filters.variant and filters.variant ~= "" then
+        local isUpgrade = isUpgradeEntry(entry) or hasUpgradeInfo
+        if filters.variant == "upgrade" and not isUpgrade then
+          matches = false
+        elseif filters.variant == "base" and isUpgrade then
+          matches = false
+        end
+      end
+      if matches and filters.variant and filters.variant ~= ""
+        and filters.variant ~= "base" and filters.variant ~= "upgrade"
+        and not matchesItemType(haystack, filters.variant) then
+        matches = false
+      end
 
       if matches then
-        if entry.isWorldforged == true and entry.itemLink then
+        if entry.isWorldforged == true and entry.quality ~= 0 and hasBindOnPickup(entry) and entry.itemLink then
           local location = self:GetBestLocationForFingerprint(fingerprint)
           local upgradeInfo = self:GetUpgradeInfo(itemKey)
           local sourceInfo = self:GetUpgradeSourceInfo(itemKey)
@@ -734,13 +947,14 @@ function DB:SearchItems(query, filters)
             itemKey = itemKey,
             fingerprint = fingerprint,
             itemId = entry.itemId or bucket.itemId,
+            realm = entry.realm or "Unknown",
             itemName = bucket.itemName or entry.itemName or "Unknown",
             itemLink = entry.itemLink,
             itemTexture = entry.itemTexture,
             quality = entry.quality,
             itemLevel = entry.itemLevel or 0,
             effectiveLevel = entry.effectiveLevel or 0,
-            upgradeLevel = entry.upgradeLevel or 0,
+            upgradeLevel = entry.upgradeLevel or (isUpgrade and 1 or 0),
             statsText = entry.statsText or "",
             tooltipText = entry.tooltipText or "",
             variantCount = bucket.variantCount or countTableEntries(bucket.variants),

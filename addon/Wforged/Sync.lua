@@ -4,6 +4,7 @@ local Sync = {}
 addon.Sync = Sync
 
 Sync.prefix = "WFORGED"
+Sync.exportFormat = "WFGDB7"
 Sync.importBatchSize = 2
 Sync.importInterval = 0.5
 Sync.testImport = "WFGDB6;WFG6|450559|40|0.7154|0.7379|1784222003;WFG6|450557|40|0.5317|0.7906|1784195081;WFG6|450748|40|0.6078|0.5827|1784194402;WFG6|1388996||1784192678;WFG6|1388679||1784192678;WFG6|450934||1784192669;WFG6|521267||1784192669;WFG6|450556|40|0.428|0.885|1784221802;WFG6|1388570||1784192678;WFG6|450555|40|0.3356|0.8647|1784221687;WFG6|1388779||1784192678;WFG6|450551||1784192669;WFG6|515681||1784192669;WFG6|1388546||1784192678;WFG6|515687|40|0.3573|0.904|1784221326;WFG6|450564|40|0.4137|0.6647|1784197106;WFG6|515430||1784192669;WFG6|450562|40|0.4007|0.68|1784194762;WFG6|451117||1784192669;WFG6|450593|35|0.1914|0.5561|1784222456;WFG6|450563|15|0.409|0.8196|1784200008;WFG6|515684|40|0.7007|0.7482|1784222170;WFG6|450528||1784192669;WFG6|450594|35|0.1747|0.5636|1784222299;WFG6|1388997||1784192678;WFG6|450673||1784192669;WFG6|1389367||1784192678;WFG6|450909||1784192669;WFG6|1388771||1784192678;WFG6|515429||1784192669"
@@ -37,10 +38,10 @@ local function makeItemPayload(entry)
   local observedAt = tonumber(entry.lastSeenAt or 0) or 0
   if observedAt <= 0 then observedAt = entry.firstSeenAt or time() end
   if not mapId or not x or not y then
-    return table.concat({ "WFG6", encode(entry.itemId), "", encode(observedAt) }, "|")
+    return table.concat({ "WFG6", encode(entry.itemId), "", encode(observedAt), encode(entry.realm or "Unknown") }, "|")
   end
   return table.concat({
-    "WFG6", encode(entry.itemId), encode(mapId), encode(x), encode(y), encode(observedAt),
+    "WFG6", encode(entry.itemId), encode(mapId), encode(x), encode(y), encode(observedAt), encode(entry.realm or "Unknown"),
   }, "|")
 end
 
@@ -56,6 +57,7 @@ local function decodePayload(fields)
   itemName = itemInfoName or itemName
   local hasLocation = fields[3] and fields[3] ~= "" and fields[4] and fields[5]
   local observedAt = hasLocation and fields[6] or fields[3]
+  local realm = hasLocation and fields[7] or fields[4]
   local mapId = hasLocation and tonumber(fields[3]) or nil
   local zoneName = mapId and GetMapNameByID and GetMapNameByID(mapId) or nil
   if not zoneName and mapId and addon.ResolveZoneName then
@@ -73,7 +75,7 @@ local function decodePayload(fields)
     itemTexture = itemTexture, quality = quality, itemLevel = itemLevel,
     effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId, zoneName = zoneName,
     x = hasLocation and tonumber(fields[4]) or nil, y = hasLocation and tonumber(fields[5]) or nil,
-    observedAt = tonumber(observedAt) or time(), isWorldforged = true,
+    observedAt = tonumber(observedAt) or time(), isWorldforged = true, realm = realm ~= "" and realm or "Unknown",
   }
 end
 
@@ -146,12 +148,35 @@ function Sync:BroadcastSummary(channel)
 end
 
 function Sync:Export()
-  addon:LootDebug("Export format: WFGDB6 / WFG6")
-  local parts = { "WFGDB6" }
+  addon:LootDebug("Export format: WFGDB7 / grouped locations")
+  local groups = {}
   for fingerprint, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
-    if entry.isWorldforged and entry.itemId then parts[#parts + 1] = makeItemPayload(entry) end
+    if entry.isWorldforged and entry.itemId and entry.lastMapId and entry.lastX and entry.lastY then
+      local realm = encode(entry.realm or "Unknown")
+      local mapId = encode(entry.lastMapId)
+      local x = encode(entry.lastX)
+      local y = encode(entry.lastY)
+      local key = table.concat({ realm, mapId, x, y }, "|")
+      groups[key] = groups[key] or { realm = realm, mapId = mapId, x = x, y = y, items = {} }
+      groups[key].items[#groups[key].items + 1] = table.concat({ entry.itemId, tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0 }, ":")
+    end
+  end
+  local parts = { "WFGDB7" }
+  for _, group in pairs(groups) do
+    table.sort(group.items)
+    parts[#parts + 1] = table.concat({ group.realm, group.mapId, group.x, group.y, table.concat(group.items, ",") }, "|")
   end
   return table.concat(parts, ";")
+end
+
+local function makeBroadcastPayload(entry)
+  local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
+  if not entry.itemId or not mapId or not x or not y then
+    return nil
+  end
+  local realm = encode(entry.realm or "Unknown")
+  local item = string.format("%d:%d", entry.itemId, tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0)
+  return table.concat({ "WFGDB7", realm, mapId, x, y, item }, "|")
 end
 
 function Sync:Import(textValue)
@@ -160,11 +185,15 @@ function Sync:Import(textValue)
   if textValue:sub(1, 5) == "WFG6|" then
     textValue = "WFGDB6;" .. textValue
   end
-  if textValue:sub(1, 6) ~= "WFGDB6" then
+  local format = textValue:match("^(WFGDB%d+)")
+  if format ~= "WFGDB6" and format ~= "WFGDB7" then
     if textValue:sub(1, 5) == "WFGDB" then
-      return 0, "unsupported export version; generate a new WFGDB6 export"
+      return 0, string.format("Unsupported export format %s. Update Wforged and generate a new WFGDB7 export.", tostring(format or "unknown"))
     end
     return 0, "invalid format"
+  end
+  if format == "WFGDB6" then
+    addon:LootDebug("Legacy import format WFGDB6 detected; prefer WFGDB7 exports.")
   end
   WforgedLastImport = textValue
   self.pendingImports = self.pendingImports or {}
@@ -174,7 +203,21 @@ function Sync:Import(textValue)
   local firstType, firstId = nil, nil
   local importedRecords = {}
   local firstRecordDebug = nil
-  for record in textValue:sub(8):gmatch("[^;]+") do
+  local groupedFormat = textValue:sub(1, 6) == "WFGDB7"
+  local headerLength = 8
+  for record in textValue:sub(headerLength):gmatch("[^;]+") do
+    if groupedFormat then
+      local grouped = splitPayload(record)
+      local realm, mapId, x, y, itemList = grouped[1], grouped[2], grouped[3], grouped[4], grouped[5]
+      for itemRecord in string.gmatch(itemList or "", "[^,]+") do
+        local itemId, observedAt = itemRecord:match("^(%d+):(%d+)$")
+        if itemId then
+          importedRecords[#importedRecords + 1] = { "WFG6", itemId, mapId, x, y, observedAt, realm }
+          queued = queued + 1
+        end
+      end
+      scanned = scanned + 1
+    end
     local fields = splitPayload(record)
     local rawType = string.sub(record, 1, 4)
     local rawItemId = fields[2]
@@ -201,6 +244,9 @@ function Sync:Import(textValue)
     self.pendingImports[#self.pendingImports + 1] = fields
   end
   addon:LootDebug(string.format("Import scan: records=%d queued=%d firstType=%s firstId=%s", scanned, queued, tostring(firstType), tostring(firstId)))
+  if scanned > 0 and queued == 0 then
+    return 0, string.format("Invalid %s data. Update Wforged and generate a fresh WFGDB7 export.", format)
+  end
   return queued
 end
 
@@ -256,7 +302,11 @@ function Sync:BroadcastItem(fingerprint)
     addon:LootDebug("Guild broadcast skipped: item record is unavailable.")
     return false
   end
-  local payload = makeItemPayload(entry)
+  local payload = makeBroadcastPayload(entry)
+  if not payload then
+    addon:LootDebug("Guild broadcast skipped: item has no usable location.")
+    return false
+  end
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
     C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
   elseif SendAddonMessage then
@@ -274,7 +324,7 @@ function Sync:BroadcastTestItem()
     addon:LootDebug("Test broadcast skipped: sending is disabled.")
     return false
   end
-  local payload = "WFG6|450559|40|0.7154|0.7379|" .. tostring(time())
+  local payload = "WFGDB7|Unknown|40|0.7154|0.7379|450559:" .. tostring(time())
   if C_ChatInfo and C_ChatInfo.SendAddonMessage then
     C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
   elseif SendAddonMessage then
@@ -303,7 +353,10 @@ function Sync:OnAddonMessage(prefix, message, channel, sender)
     return
   end
 
-  if message and message:sub(1, 5) == "WFG6|" then
+  if message and message:sub(1, 7) == "WFGDB7|" then
+    self:Import(message)
+    addon:LootDebug("Guild payload queued as WFGDB7.")
+  elseif message and message:sub(1, 5) == "WFG6|" then
     local fields = splitPayload(message)
     local payload = decodePayload(fields)
     addon:LootDebug(string.format("Guild payload decoded: id=%s map=%s x=%s y=%s time=%s", tostring(payload and payload.itemId), tostring(payload and payload.mapId), tostring(payload and payload.x), tostring(payload and payload.y), tostring(payload and payload.observedAt)))

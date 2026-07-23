@@ -12,6 +12,15 @@ on:
         required: false
         default: false
         type: boolean
+      release_type:
+        description: CurseForge release channel
+        required: false
+        default: release
+        type: choice
+        options:
+          - release
+          - beta
+          - alpha
 
 permissions:
   contents: write
@@ -22,6 +31,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       should_release: ${{ steps.release_check.outputs.should_release }}
+      release_type: ${{ steps.release_type.outputs.release_type }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -49,12 +59,20 @@ jobs:
             echo "Release ${release_tag} already exists; skipping build and deploy."
           fi
 
+      - name: Select release type
+        id: release_type
+        shell: bash
+        env:
+          INPUT_RELEASE_TYPE: ${{ inputs.release_type || 'release' }}
+        run: echo "release_type=${INPUT_RELEASE_TYPE}" >> "$GITHUB_OUTPUT"
+
   build:
     needs: check_release
     if: needs.check_release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ needs.check_release.outputs.version }}
+      release_type: ${{ needs.check_release.outputs.release_type }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -155,6 +173,7 @@ jobs:
           CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID || secrets.CURSEFORGE_PROJECT_ID }}
           CURSEFORGE_GAME_VERSION_ID: ${{ vars.CURSEFORGE_GAME_VERSION_ID || secrets.CURSEFORGE_GAME_VERSION_ID }}
           RELEASE_VERSION: v${{ needs.build.outputs.version }}
+          RELEASE_TYPE: ${{ needs.build.outputs.release_type }}
         run: |
           set -euo pipefail
           if [ -z "${CURSEFORGE_API_TOKEN}" ]; then
@@ -183,7 +202,8 @@ jobs:
             --arg displayName "Wforged ${RELEASE_VERSION}" \
             --arg changelog "$changelog" \
             --argjson gameVersionId "${CURSEFORGE_GAME_VERSION_ID}" \
-            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown", releaseType: "release", gameVersions: [$gameVersionId]}')"
+            --arg releaseType "$RELEASE_TYPE" \
+            '{displayName: $displayName, changelog: $changelog, changelogType: "markdown", releaseType: $releaseType, gameVersions: [$gameVersionId]}')"
           curl --fail-with-body --retry 3 \
             -X POST \
             -H "x-api-token: ${CURSEFORGE_API_TOKEN}" \

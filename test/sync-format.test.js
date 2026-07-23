@@ -140,3 +140,15 @@ test('accepts raw WFG6 records copied without the WFGDB6 header', () => {
   assert.equal(records[0][1], '450563');
   assert.equal(records[1][1], '450564');
 });
+
+test('grouped WFG7 export keeps one location and item timestamps', () => {
+  const grouped = 'WFGDB7;Realm%20A|40|0.4|0.8|450559:100,450557:200';
+  const records = grouped.slice(7).split(';').map((record) => record.split('|'));
+  assert.equal(records.length, 1);
+  assert.deepEqual(records[0].slice(0, 4), ['Realm%20A', '40', '0.4', '0.8']);
+  assert.deepEqual(records[0][4].split(','), ['450559:100', '450557:200']);
+});
+
+test('distinguishes unsupported export versions', () => {
+  assert.throws(() => parseImport('WFGDB5;WFG5|450559'), /WFGDB6/);
+});

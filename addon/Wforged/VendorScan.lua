@@ -387,6 +387,13 @@ function VendorScan:ScanUpgradeFrameContents()
         x = x,
         y = y,
         upgradeLevel = itemLevel,
+        isUpgrade = true,
+        isWorldforged = true,
+        upgradeCandidate = false,
+        upgradeCost = candidate.parsedCost,
+        upgradeCurrency = candidate.parsedCost and "rune" or "unknown",
+        sourceItemId = candidate.sourceItemId,
+        sourceItemName = candidate.sourceItemName,
       })
 
       addon.DB:RecordVendorUpgrade({
@@ -406,6 +413,7 @@ function VendorScan:ScanUpgradeFrameContents()
         sourceItemName = candidate.sourceItemName,
         fromLevel = itemLevel,
         toLevel = itemLevel,
+        isUpgrade = true,
         itemTexture = itemTexture,
       })
       captured = captured + 1

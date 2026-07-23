@@ -2,6 +2,10 @@ local addonName, addon = ...
 
 local SearchUI = {}
 addon.SearchUI = SearchUI
+SearchUI.sortKey = "level"
+SearchUI.sortAscending = false
+SearchUI.pageSize = 100
+SearchUI.page = 1
 
 local function getUIState()
   WforgedDB.searchUI = WforgedDB.searchUI or {}
@@ -13,6 +17,7 @@ local filterOptions = {
   slot = {"", "Head", "Shoulder", "Chest", "Back", "Wrist", "Hands", "Waist", "Legs", "Feet", "Finger", "Trinket", "Neck", "Weapon", "Off Hand"},
   weaponType = {"", "Axe", "Bow", "Crossbow", "Dagger", "Fist", "Gun", "Mace", "Polearm", "Shield", "Staff", "Sword", "Two-Handed Axe", "Two-Handed Sword", "Two-Handed Mace", "Wand"},
   quality = {"", "Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary"},
+  variant = {"", "base", "upgrade", "equipment", "bags", "food", "other"},
   stat1 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Crit", "Haste", "Mastery", "Versatility", "Spell Power"},
   stat2 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Crit", "Haste", "Mastery", "Versatility", "Spell Power"},
   level = {"", "base", "upgrade", "10", "20", "30", "40", "50", "60"},
@@ -24,10 +29,15 @@ local function filterLabel(value, kind)
     if kind == "weaponType" then return "Any weapon" end
     if kind == "armorType" then return "Any armor type" end
     if kind == "quality" then return "Any quality" end
+    if kind == "variant" then return "All item types" end
     return "Any " .. kind
   end
   if value == "base" then return "Base items" end
   if value == "upgrade" then return "Upgrades" end
+  if value == "equipment" then return "Equipment" end
+  if value == "bags" then return "Bags" end
+  if value == "food" then return "Food/Drink" end
+  if value == "other" then return "Other items" end
   if kind == "level" then return "Level " .. value .. "+" end
   return value
 end
@@ -50,6 +60,11 @@ local function createFilter(parent, kind, x, y)
     if not menu then
       menu = CreateFrame("Frame", "WforgedFilterMenu", UIParent, "UIDropDownMenuTemplate")
     end
+    if menu:IsShown() and menu.filterButton == self then
+      if CloseDropDownMenus then CloseDropDownMenus() end
+      menu.filterButton = nil
+      return
+    end
     UIDropDownMenu_Initialize(menu, function(_, level)
       for _, value in ipairs(filterOptions[kind]) do
         local info = UIDropDownMenu_CreateInfo()
@@ -59,6 +74,7 @@ local function createFilter(parent, kind, x, y)
           self.value = value
           self:SetText(filterLabel(value, kind))
           if SearchUI.filters then SearchUI.filters[kind] = value end
+          SearchUI.page = 1
           SearchUI:Refresh()
         end
         UIDropDownMenu_AddButton(info, level)
@@ -93,7 +109,7 @@ local function formatUpgradeCost(cost, currency)
   end
 
   if currency == "rune" then
-    return tostring(cost) .. " Rune"
+    return tostring(cost)
   end
 
   return tostring(cost) .. (currency and (" " .. tostring(currency)) or "")
@@ -261,7 +277,30 @@ local function hasUsableLocation(result)
     result.lastZoneName
   ) or result.lastZoneName
 
-  return (zoneName and zoneName ~= "") or (result.lastMapId ~= nil)
+  if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
+    return false
+  end
+  return true
+end
+
+local function getLocationText(result)
+  if not hasUsableLocation(result) then return "-" end
+  local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
+    result.lastMapId, result.lastContinent, result.lastZone, result.lastZoneName
+  ) or result.lastZoneName
+  if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
+    return "-"
+  end
+  return zoneName
+end
+
+local function getQualityName(quality)
+  return ({ [0] = "Poor", [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary" })[tonumber(quality)] or "-"
+end
+
+local function isForeignRealm(result)
+  local current = addon.DB and addon.DB.GetCurrentRealm and addon.DB:GetCurrentRealm() or "Unknown"
+  return result and result.realm and result.realm ~= "Unknown" and result.realm ~= current
 end
 
 local function createCheckbox(parent, labelText)
@@ -281,31 +320,163 @@ end
 local function createRow(parent, index)
   local row = CreateFrame("Button", nil, parent)
   row:SetHeight(28)
-  row:SetPoint("TOPLEFT", 8, -8 - ((index - 1) * 30))
-  row:SetPoint("TOPRIGHT", -28, -8 - ((index - 1) * 30))
+  local rowOffset = -2 - ((index - 1) * 30)
+  row:SetPoint("TOPLEFT", 8, rowOffset)
+  row:SetPoint("TOPRIGHT", 0, rowOffset)
 
   row.nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  row.nameText:SetPoint("LEFT", 0, 0)
-  row.nameText:SetPoint("RIGHT", -166, 0)
+  row.icon = row:CreateTexture(nil, "ARTWORK")
+  row.icon:SetSize(20, 20)
+  row.icon:SetPoint("LEFT", 0, 0)
+  row.nameText:SetPoint("LEFT", 26, 0)
+  row.nameText:SetWidth(234)
   row.nameText:SetJustifyH("LEFT")
-
+  row.levelText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  row.levelText:SetPoint("LEFT", 270, 0)
+  row.levelText:SetWidth(45)
+  row.qualityText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  row.qualityText:SetPoint("LEFT", 320, 0)
+  row.qualityText:SetWidth(85)
+  row.locationText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  row.locationText:SetPoint("LEFT", 405, 0)
+  row.locationText:SetWidth(263)
+  row.locationText:SetJustifyH("LEFT")
+  row.locationText:SetWordWrap(false)
+  row.currencyButton = CreateFrame("Button", nil, row)
+  row.currencyButton:SetSize(14, 14)
+  row.currencyButton:SetPoint("LEFT", row.locationText, "LEFT", 0, 0)
+  row.currencyButton.texture = row.currencyButton:CreateTexture(nil, "ARTWORK")
+  row.currencyButton.texture:SetAllPoints()
+  row.currencyButton.count = row.currencyButton:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+  row.currencyButton.count:SetPoint("BOTTOMRIGHT", 2, -2)
+  row.currencyButton:SetScript("OnEnter", function(button)
+    if not button.itemLink or not GameTooltip then return end
+    GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+    GameTooltip:SetHyperlink(button.itemLink)
+    GameTooltip:Show()
+  end)
+  row.currencyButton:SetScript("OnLeave", function()
+    if GameTooltip then GameTooltip:Hide() end
+  end)
+  row.currencyButton:Hide()
   row.highlight = row:CreateTexture(nil, "HIGHLIGHT")
   row.highlight:SetAllPoints(row)
   row.highlight:SetTexture(1, 1, 1, 0.08)
+  row.searchHighlight = row:CreateTexture(nil, "BACKGROUND")
+  row.searchHighlight:SetAllPoints(row)
+  row.searchHighlight:SetTexture(1, 0.75, 0.1, 0.28)
+  row.searchHighlight:Hide()
 
   row.shareButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   row.shareButton:SetWidth(44)
   row.shareButton:SetHeight(22)
-  row.shareButton:SetPoint("RIGHT", -138, 0)
+  row.shareButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
   row.shareButton:SetText("Share")
 
   row.showMapButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   row.showMapButton:SetWidth(36)
   row.showMapButton:SetHeight(20)
-  row.showMapButton:SetPoint("LEFT", row.shareButton, "RIGHT", 8, 0)
+  row.showMapButton:SetPoint("LEFT", row.shareButton, "RIGHT", 6, 0)
   row.showMapButton:SetText("Map")
 
+  row.findButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+  row.findButton:SetWidth(22)
+  row.findButton:SetHeight(22)
+  row.findButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+  row.findButton:SetText("")
+  row.findButton.icon = row.findButton:CreateTexture(nil, "ARTWORK")
+  row.findButton.icon:SetSize(14, 14)
+  row.findButton.icon:SetPoint("CENTER")
+  row.findButton.icon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+  row.findButton:SetScript("OnEnter", function(button)
+    if not button:IsShown() or not GameTooltip then return end
+    GameTooltip:SetOwner(button, "ANCHOR_TOP")
+    GameTooltip:SetText("Find previous item")
+    GameTooltip:Show()
+  end)
+  row.findButton:SetScript("OnLeave", function()
+    if GameTooltip then GameTooltip:Hide() end
+  end)
+
   return row
+end
+
+local function createTableHeader(parent, text, key, x, width)
+  local header = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+  header:SetPoint("TOPLEFT", x, 0)
+  header:SetSize(width, 22)
+  header.label = text
+  header.sortKey = key
+  header.sortArrow = header:CreateTexture(nil, "OVERLAY")
+  header.sortArrow:SetTexture("Interface\\Buttons\\UI-SortArrow")
+  header.sortArrow:SetSize(10, 10)
+  header.sortArrow:SetPoint("CENTER", header, "RIGHT", -11, 0)
+  header.sortArrow:Hide()
+  header:SetScript("OnClick", function()
+    if SearchUI.sortKey == key then
+      SearchUI.sortAscending = not SearchUI.sortAscending
+    else
+      SearchUI.sortKey = key
+      SearchUI.sortAscending = true
+    end
+    SearchUI.page = 1
+    SearchUI:UpdateHeaderSortState()
+    SearchUI:Refresh()
+  end)
+  return header
+end
+
+local function safeSortNumber(value, fallback)
+  local number = tonumber(value)
+  if not number or number ~= number then
+    return fallback or 0
+  end
+  return number
+end
+
+function SearchUI:UpdateHeaderSortState()
+  for _, header in ipairs((self.frame and self.frame.headers) or {}) do
+    local active = header.sortKey == self.sortKey
+    header:SetText(header.label)
+    if header.sortArrow then
+      if active then
+        -- Use the same atlas region for both directions. Flipping its vertical
+        -- coordinates avoids the position shift caused by texture rotation.
+        if self.sortAscending then
+          header.sortArrow:SetTexCoord(0, 0.5, 1, 0.5)
+        else
+          header.sortArrow:SetTexCoord(0, 0.5, 0.5, 1)
+        end
+        header.sortArrow:Show()
+      else
+        header.sortArrow:Hide()
+      end
+    end
+    local fontString = header.GetFontString and header:GetFontString()
+    if fontString and fontString.SetTextColor then
+      if active then
+        fontString:SetTextColor(1, 0.82, 0, 1)
+      else
+        fontString:SetTextColor(0.75, 0.75, 0.75, 1)
+      end
+    end
+  end
+end
+
+function SearchUI:UpdateRepairIndicator()
+  local indicator = self.frame and self.frame.repairIndicator
+  if not indicator then return end
+  local state, pending = "idle", 0
+  if addon.ItemScan and addon.ItemScan.GetRepairStatus then
+    state, pending = addon.ItemScan:GetRepairStatus()
+  end
+  if state == "active" then
+    indicator:SetText(string.format("Loading item data... %d remaining", pending))
+    indicator:SetTextColor(1, 0.82, 0, 1)
+    indicator:Show()
+  else
+    indicator:Hide()
+  end
 end
 
 local function configureRow(row)
@@ -322,6 +493,11 @@ local function configureRow(row)
         tostring(clicked.lastX or "?"),
         tostring(clicked.lastY or "?")
       ))
+      if IsControlKeyDown and IsControlKeyDown() and clickedRow.result.itemLink and DressUpItemLink then
+        addon:LootDebug("Search click opened dress room.")
+        DressUpItemLink(clickedRow.result.itemLink)
+        return
+      end
       if IsShiftKeyDown and IsShiftKeyDown() and ChatEdit_InsertLink and clickedRow.result.itemLink then
         addon:LootDebug("Search click inserted item link into chat.")
         ChatEdit_InsertLink(clickedRow.result.itemLink)
@@ -349,7 +525,12 @@ function SearchUI:EnsureRows(count)
     self:ApplyElvUIRowSkin(self.rows[index])
   end
   if self.frame and self.frame.content then
-    self.frame.content:SetHeight(math.max(930, 16 + (count * 30)))
+    local viewportHeight = self.frame.scroll and self.frame.scroll:GetHeight() or 0
+    local viewportWidth = self.frame.scroll and self.frame.scroll:GetWidth() or 0
+    if viewportWidth > 0 then
+      self.frame.content:SetWidth(viewportWidth)
+    end
+    self.frame.content:SetHeight(math.max(viewportHeight, 2 + (count * 30)))
   end
 end
 
@@ -361,7 +542,56 @@ function SearchUI:ApplyElvUIRowSkin(row)
   if S.HandleButton then
     S:HandleButton(row.shareButton)
     S:HandleButton(row.showMapButton)
+    S:HandleButton(row.findButton)
   end
+end
+
+function SearchUI:HighlightResult(result)
+  if not result then return end
+  for _, row in ipairs(self.rows or {}) do
+    if row.result and (row.result.fingerprint == result.fingerprint or row.result.itemKey == result.itemKey) then
+      row.searchHighlight:Show()
+      if C_Timer and C_Timer.After then
+        C_Timer.After(3, function()
+          if row.searchHighlight then row.searchHighlight:Hide() end
+        end)
+      end
+      return
+    end
+  end
+end
+
+function SearchUI:SearchForSource(result)
+  if not result then return end
+  local sourceName = result.sourceItemName or result.resolvedSourceItemName or result.itemName
+  local sourceKey = result.sourceItemKey or result.resolvedSourceItemKey
+  self.filters = {}
+  for kind, button in pairs(self.frame.filters or {}) do
+    self.filters[kind] = ""
+    button.value = ""
+    button:SetText(filterLabel("", kind))
+  end
+  self.frame.editBox:SetText(sourceName or "")
+  self:Refresh(sourceName or "")
+  local targetLevel = tonumber(result.itemLevel or result.effectiveLevel or 0) or 0
+  local bestPrevious
+  local directPrevious
+  for _, row in ipairs(self.rows or {}) do
+    if row.result then
+      local candidate = row.result
+      local candidateLevel = tonumber(candidate.itemLevel or candidate.effectiveLevel or 0) or 0
+      local sameItem = candidate.itemName == sourceName
+      local directMatch = sourceKey and candidate.itemKey == sourceKey
+      if directMatch then
+        directPrevious = candidate
+      elseif sameItem and candidateLevel < targetLevel
+        and (not bestPrevious or candidateLevel > (tonumber(bestPrevious.itemLevel or bestPrevious.effectiveLevel or 0) or 0)) then
+        bestPrevious = candidate
+      end
+    end
+  end
+  bestPrevious = bestPrevious or directPrevious
+  if bestPrevious then self:HighlightResult(bestPrevious) end
 end
 
 function SearchUI:SetSelectedResult(result)
@@ -380,26 +610,147 @@ function SearchUI:Refresh(query)
     return
   end
 
+  if self.frame and self.frame.scroll then
+    self.frame.scroll:SetVerticalScroll(0)
+  end
+
   local filters = self.filters or {}
   local results = addon.DB:SearchItems(query or (self.frame and self.frame.editBox and self.frame.editBox:GetText()) or "", filters)
-  self.results = results
-  self:EnsureRows(#results)
+  local compactResults = {}
+  for _, result in pairs(results or {}) do
+    if result then compactResults[#compactResults + 1] = result end
+  end
+  results = compactResults
+  local key = self.sortKey or "name"
+  local ascending = self.sortAscending ~= false
+  for index, result in ipairs(results) do
+    local value, rank
+    if key == "level" then
+      value = safeSortNumber(result.itemLevel)
+    elseif key == "quality" then
+      value = safeSortNumber(result.quality)
+    elseif key == "location" then
+      local isUpgrade = (tonumber(result.upgradeLevel or 0) or 0) > 0
+      local location = getLocationText(result)
+      local missing = not isUpgrade and location == "-"
+      rank = missing and 3 or (isUpgrade and 1 or 2)
+      value = isUpgrade and safeSortNumber(result.upgradeCost, -1) or location
+    elseif key == "upgrade" then
+      value = safeSortNumber(result.upgradeLevel)
+    else
+      value = string.lower(tostring(result.itemName or ""))
+    end
+    result._searchSortRank = rank or 0
+    result._searchSortValue = value
+    result._searchSortIndex = index
+    local valueToken
+    if type(value) == "number" then
+      valueToken = string.format("%020.6f", value + 1000000000)
+    else
+      valueToken = tostring(value or "")
+    end
+    result._searchSortToken = string.format(
+      "%03d:%s:%s:%010d:%010d",
+      result._searchSortRank,
+      valueToken,
+      string.lower(tostring(result.itemName or "")),
+      safeSortNumber(result.itemId),
+      index
+    )
+  end
+  table.sort(results, function(left, right)
+    if left._searchSortToken == right._searchSortToken then return false end
+    if ascending then return left._searchSortToken < right._searchSortToken end
+    return left._searchSortToken > right._searchSortToken
+  end)
+  for _, result in ipairs(results) do
+    result._searchSortRank = nil
+    result._searchSortValue = nil
+    result._searchSortIndex = nil
+    result._searchSortToken = nil
+  end
+  self.allResults = results
+  local pageCount = math.max(1, math.ceil(#results / self.pageSize))
+  self.page = math.min(math.max(self.page or 1, 1), pageCount)
+  local first = ((self.page - 1) * self.pageSize) + 1
+  local pageResults = {}
+  for index = first, math.min(first + self.pageSize - 1, #results) do
+    pageResults[#pageResults + 1] = results[index]
+  end
+  self.results = pageResults
+  if self.frame and self.frame.pageLabel then
+    self.frame.pageLabel:SetText(string.format("Page %d / %d", self.page, pageCount))
+    self.frame.previousPage:SetEnabled(self.page > 1)
+    self.frame.nextPage:SetEnabled(self.page < pageCount)
+  end
+  self:UpdateHeaderSortState()
+  self:EnsureRows(#pageResults)
   for index, row in ipairs(self.rows) do
-    local result = results[index]
+    local result = pageResults[index]
     if result then
       row.result = result
+      row:SetAlpha(isForeignRealm(result) and 0.45 or 1)
       local upgradeText = formatUpgradeCost(result.upgradeCost, result.upgradeCurrency)
       local canShareLocation = hasUsableLocation(result)
-      local metadataPending = not result.itemLevel or result.itemLevel <= 0
+      -- Bags and some utility items legitimately have item level 0.  That is
+      -- not the same as item data still being unavailable.
+      local metadataPending = not result.itemName or result.itemName == ""
         or not result.quality or result.quality < 0
       row.nameText:SetText(string.format(
-        "%s%s|r %s%s",
+        "%s%s|r",
         metadataPending and "|cffaaaaaa" or getQualityColorCode(result.quality),
-        result.itemName,
-        metadataPending and "|cffcc8844[loading item data...]|r" or string.format("|cff888888[ilvl %d]|r", result.itemLevel),
-        upgradeText and (" |cffffcc66" .. upgradeText .. "|r") or ""
+        result.itemName or (result.itemId and ("Item #" .. tostring(result.itemId)) or "Unknown item")
       ))
-      if canShareLocation then
+      local icon = result.itemTexture
+      if not icon and result.itemId and GetItemIcon then icon = GetItemIcon(result.itemId) end
+      row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+      row.levelText:SetText(metadataPending and "-" or tostring(result.itemLevel or 0))
+      row.qualityText:SetText(metadataPending and "-" or getQualityName(result.quality))
+      local isUpgrade = (tonumber(result.upgradeLevel or 0) or 0) > 0
+      -- Action controls are recycled between rows. Always reset their state
+      -- before showing the one valid action for the current result.
+      row.findButton:Hide()
+      row.shareButton:Hide()
+      row.showMapButton:Hide()
+      row.findButton:SetText("")
+      row.shareButton:SetText("")
+      row.showMapButton:SetText("")
+      row.findButton:SetScript("OnClick", nil)
+      row.shareButton:SetScript("OnClick", nil)
+      row.showMapButton:SetScript("OnClick", nil)
+      if isUpgrade then
+        row.locationText:SetText(upgradeText or "unknown cost")
+        row.locationText:SetJustifyH("RIGHT")
+        row.locationText:SetWidth(245)
+        row.findButton:ClearAllPoints()
+        row.findButton:SetPoint("LEFT", row.locationText, "RIGHT", 26, 0)
+        if result.upgradeCurrency == "rune" and GetItemIcon then
+          local currencyId = 375250
+          row.currencyButton.texture:SetTexture(GetItemIcon(currencyId) or "Interface\\Icons\\INV_Misc_QuestionMark")
+          row.currencyButton.itemLink = GetItemInfo and select(2, GetItemInfo(currencyId)) or nil
+          row.currencyButton.count:SetText("")
+          row.currencyButton.count:Hide()
+          row.currencyButton:ClearAllPoints()
+          row.currencyButton:SetPoint("LEFT", row.locationText, "RIGHT", 3, 0)
+          row.currencyButton:Show()
+        else
+          row.currencyButton:Hide()
+        end
+      else
+        row.locationText:SetText(getLocationText(result))
+        row.locationText:SetJustifyH("LEFT")
+        row.locationText:SetWidth(263)
+        row.findButton:ClearAllPoints()
+        row.findButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+        row.currencyButton:Hide()
+      end
+      if isUpgrade then
+        row.findButton:SetScript("OnClick", function()
+          SearchUI:SearchForSource(result)
+        end)
+        row.findButton:SetText("")
+        row.findButton:Show()
+      elseif canShareLocation then
         row.shareButton:SetScript("OnClick", function()
           openChatWithText(buildShareText(result))
         end)
@@ -408,24 +759,24 @@ function SearchUI:Refresh(query)
             addon.MapNotes:ShowOnMap(result, true)
           end
         end)
+        row.shareButton:SetText("Share")
+        row.showMapButton:SetText("Map")
         row.shareButton:Show()
         row.showMapButton:Show()
-      else
-        row.shareButton:SetScript("OnClick", nil)
-        row.showMapButton:SetScript("OnClick", nil)
-        row.shareButton:Hide()
-        row.showMapButton:Hide()
       end
       row:Show()
     else
       row.result = nil
+      row:SetAlpha(1)
+      row.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+      row.findButton:Hide()
       row.shareButton:Hide()
       row.showMapButton:Hide()
       row:Hide()
     end
   end
 
-  self:SetSelectedResult(results[1])
+  self:SetSelectedResult(pageResults[1])
 end
 
 function SearchUI:SaveState()
@@ -466,6 +817,8 @@ end
 
 function SearchUI:ResetFilters()
   if not self.frame then return end
+  self.page = 1
+  self.suppressRefresh = true
   self.filters = {}
   for kind, button in pairs(self.frame.filters or {}) do
     self.filters[kind] = ""
@@ -473,6 +826,7 @@ function SearchUI:ResetFilters()
     button:SetText(filterLabel("", kind))
   end
   self.frame.editBox:SetText("")
+  self.suppressRefresh = nil
   self:Refresh("")
 end
 
@@ -539,7 +893,10 @@ function SearchUI:Toggle()
       editBox:ClearFocus()
     end)
     editBox:SetScript("OnTextChanged", function(box)
-      SearchUI:Refresh(box:GetText())
+      if not SearchUI.suppressRefresh then
+        SearchUI.page = 1
+        SearchUI:Refresh(box:GetText())
+      end
     end)
     frame.editBox = editBox
     editBox:SetText(state.query or "")
@@ -555,7 +912,7 @@ function SearchUI:Toggle()
 
     self.filters = {}
     frame.filters = {}
-    local filterKinds = {"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "level"}
+    local filterKinds = {"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "level", "variant"}
     for index, kind in ipairs(filterKinds) do
       local filterRow = index <= 4 and 0 or 1
       local filterColumn = (index - 1) % 4
@@ -573,6 +930,11 @@ function SearchUI:Toggle()
     local hint = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     hint:SetPoint("LEFT", editBox, "RIGHT", 12, 0)
     hint:SetText("Search by name, stats, level, or upgrade.")
+    frame.repairIndicator = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.repairIndicator:SetPoint("LEFT", hint, "RIGHT", 12, 0)
+    frame.repairIndicator:SetWidth(190)
+    frame.repairIndicator:SetJustifyH("LEFT")
+    frame.repairIndicator:Hide()
 
     frame.logsCheckbox = createCheckbox(frame, "Show logs")
     frame.logsCheckbox:SetPoint("TOPLEFT", editBox, "BOTTOMLEFT", -4, -42)
@@ -584,6 +946,7 @@ function SearchUI:Toggle()
     frame.autoConfirmCheckbox:SetPoint("LEFT", frame.logsCheckbox, "RIGHT", 180, 0)
     frame.autoConfirmCheckbox:SetScript("OnClick", function(button)
       addon.DB:GetSettings().autoConfirmWorldforged = button:GetChecked() and true or false
+      addon:LootDebug(string.format("AutoConfirm setting changed: enabled=%s", tostring(button:GetChecked() and true or false)))
       if not button:GetChecked() and addon.AutoConfirm then
         addon.AutoConfirm:SetLootContext(false)
       end
@@ -658,6 +1021,10 @@ function SearchUI:Toggle()
     settings:SetPoint("CENTER")
     settings:SetFrameStrata("DIALOG")
     settings:EnableMouse(true)
+    settings:SetMovable(true)
+    settings:RegisterForDrag("LeftButton")
+    settings:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    settings:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     settings:Hide()
     table.insert(UISpecialFrames, "WforgedSettingsFrame")
     settings.bg = settings:CreateTexture(nil, "BACKGROUND")
@@ -671,6 +1038,11 @@ function SearchUI:Toggle()
     settings.title = settings:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     settings.title:SetPoint("TOP", 0, -14)
     settings.title:SetText("Wforged Settings")
+    if settings.title.EnableMouse then
+      settings.title:EnableMouse(true)
+      settings.title:SetScript("OnMouseDown", function() settings:StartMoving() end)
+      settings.title:SetScript("OnMouseUp", function() settings:StopMovingOrSizing() end)
+    end
     local settingsClose = CreateFrame("Button", nil, settings)
     settingsClose:SetSize(24, 24)
     settingsClose:SetPoint("TOPRIGHT", -4, -4)
@@ -826,13 +1198,54 @@ function SearchUI:Toggle()
     end)
 
     local scroll = CreateFrame("ScrollFrame", nil, frame, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 12, -178)
-    scroll:SetPoint("BOTTOMRIGHT", -28, 12)
+    scroll:SetPoint("TOPLEFT", 12, -202)
+    scroll:SetPoint("BOTTOMRIGHT", -28, 42)
+
+    local previousPage = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    previousPage:SetSize(28, 22)
+    previousPage:SetPoint("BOTTOMLEFT", 16, 10)
+    previousPage:SetText("<")
+    previousPage:SetScript("OnClick", function()
+      if SearchUI.page > 1 then
+        SearchUI.page = SearchUI.page - 1
+        SearchUI:Refresh()
+      end
+    end)
+    local pageLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    pageLabel:SetPoint("BOTTOM", 0, 15)
+    pageLabel:SetText("Page 1 / 1")
+    local nextPage = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    nextPage:SetSize(28, 22)
+    nextPage:SetPoint("BOTTOMRIGHT", -34, 10)
+    nextPage:SetText(">")
+    nextPage:SetScript("OnClick", function()
+      local pageCount = math.max(1, math.ceil(#(SearchUI.allResults or {}) / SearchUI.pageSize))
+      if SearchUI.page < pageCount then
+        SearchUI.page = SearchUI.page + 1
+        SearchUI:Refresh()
+      end
+    end)
+    frame.previousPage = previousPage
+    frame.pageLabel = pageLabel
+    frame.nextPage = nextPage
+
+    local headerFrame = CreateFrame("Frame", nil, frame)
+    headerFrame:SetPoint("TOPLEFT", 20, -176)
+    headerFrame:SetPoint("TOPRIGHT", -28, -176)
+    headerFrame:SetHeight(24)
+    frame.headers = {
+      createTableHeader(headerFrame, "Item", "name", 0, 270),
+      createTableHeader(headerFrame, "iLvl", "level", 270, 50),
+      createTableHeader(headerFrame, "Quality", "quality", 320, 85),
+      createTableHeader(headerFrame, "Location/Price", "location", 405, 263),
+    }
+    self:UpdateHeaderSortState()
 
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(820, 930)
     scroll:SetScrollChild(content)
     frame.scrollBar = scroll.ScrollBar or (scroll.GetName and _G[scroll:GetName() .. "ScrollBar"])
+    frame.scroll = scroll
     frame.content = content
 
     self.rows = {}
@@ -882,7 +1295,10 @@ function SearchUI:ApplyElvUISkin(frame)
     if frame.resetDataButton then S:HandleButton(frame.resetDataButton) end
     if frame.importTestButton then S:HandleButton(frame.importTestButton) end
     if frame.testBroadcastButton then S:HandleButton(frame.testBroadcastButton) end
+    if frame.previousPage then S:HandleButton(frame.previousPage) end
+    if frame.nextPage then S:HandleButton(frame.nextPage) end
     for _, row in ipairs(self.rows or {}) do self:ApplyElvUIRowSkin(row) end
+    for _, header in ipairs(frame.headers or {}) do S:HandleButton(header) end
     for _, button in pairs(frame.filters or {}) do
       S:HandleButton(button)
     end
