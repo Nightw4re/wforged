@@ -250,10 +250,12 @@ function ItemScan:FinalizePendingRecord(record)
   addon.DB:RemovePendingItem(record.pendingKey)
   if record.sourceType == "loot-chat" and addon.Sync and addon.Sync.BroadcastItem then
     local settings = addon.DB:GetSettings()
-    if settings.sendGuildUpdates ~= false then
-      addon:LootDebug("Guild broadcast enabled; sending Worldforged item.")
+    if settings.sendGuildUpdates ~= false or settings.sendPartyUpdates then
+      addon:LootDebug("Outbound broadcast enabled; sending Worldforged item.")
+      addon.Sync:BroadcastItem(fingerprint)
+    else
+      addon:LootDebug("Broadcast skipped: all outbound channels are disabled.")
     end
-    addon.Sync:BroadcastItem(fingerprint)
   end
   addon:LootDebug(string.format(
     "Stored %s (itemId=%s, level=%s, source=%s)",

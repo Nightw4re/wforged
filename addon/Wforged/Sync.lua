@@ -7,6 +7,7 @@ Sync.prefix = "WFORGED"
 Sync.exportFormat = "WFGDB8"
 Sync.importBatchSize = 2
 Sync.importInterval = 0.5
+Sync.shareChunkSize = 180
 Sync.testImport = "WFGDB6;WFG6|450559|40|0.7154|0.7379|1784222003;WFG6|450557|40|0.5317|0.7906|1784195081;WFG6|450748|40|0.6078|0.5827|1784194402;WFG6|1388996||1784192678;WFG6|1388679||1784192678;WFG6|450934||1784192669;WFG6|521267||1784192669;WFG6|450556|40|0.428|0.885|1784221802;WFG6|1388570||1784192678;WFG6|450555|40|0.3356|0.8647|1784221687;WFG6|1388779||1784192678;WFG6|450551||1784192669;WFG6|515681||1784192669;WFG6|1388546||1784192678;WFG6|515687|40|0.3573|0.904|1784221326;WFG6|450564|40|0.4137|0.6647|1784197106;WFG6|515430||1784192669;WFG6|450562|40|0.4007|0.68|1784194762;WFG6|451117||1784192669;WFG6|450593|35|0.1914|0.5561|1784222456;WFG6|450563|15|0.409|0.8196|1784200008;WFG6|515684|40|0.7007|0.7482|1784222170;WFG6|450528||1784192669;WFG6|450594|35|0.1747|0.5636|1784222299;WFG6|1388997||1784192678;WFG6|450673||1784192669;WFG6|1389367||1784192678;WFG6|450909||1784192669;WFG6|1388771||1784192678;WFG6|515429||1784192669"
 
 local function encode(value)
@@ -303,10 +304,6 @@ function Sync:ProcessImportQueue(elapsed)
 end
 
 function Sync:BroadcastItem(fingerprint)
-  if addon.DB:GetSettings().sendGuildUpdates == false then
-    addon:LootDebug("Guild broadcast skipped: sending is disabled.")
-    return false
-  end
   local entry = addon.DB.data.itemsByFingerprint[fingerprint]
   if not entry or not entry.isWorldforged then
     addon:LootDebug("Guild broadcast skipped: item record is unavailable.")
@@ -317,15 +314,30 @@ function Sync:BroadcastItem(fingerprint)
     addon:LootDebug("Guild broadcast skipped: item has no usable location.")
     return false
   end
-  if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-    C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
-  elseif SendAddonMessage then
-    SendAddonMessage(self.prefix, payload, "GUILD")
+  local settings = addon.DB:GetSettings()
+  if settings.sendGuildUpdates ~= false then
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+      C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
+    elseif SendAddonMessage then
+      SendAddonMessage(self.prefix, payload, "GUILD")
+    else
+      addon:LootDebug("Guild broadcast skipped: addon-message API is unavailable.")
+    end
+    addon:LootDebug("Guild broadcast sent: " .. tostring(entry.itemName or entry.itemId))
   else
-    addon:LootDebug("Guild broadcast skipped: addon-message API is unavailable.")
-    return false
+    addon:LootDebug("Guild broadcast skipped: sending is disabled.")
   end
-  addon:LootDebug("Guild broadcast sent: " .. tostring(entry.itemName or entry.itemId))
+  local function send(channel, channelId)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+      C_ChatInfo.SendAddonMessage(self.prefix, payload, channel, channelId)
+    elseif SendAddonMessage then
+      SendAddonMessage(self.prefix, payload, channel, channelId)
+    end
+  end
+  if settings.sendPartyUpdates then
+    send("PARTY")
+    addon:LootDebug("Party broadcast sent: " .. tostring(entry.itemName or entry.itemId))
+  end
   return true
 end
 
@@ -347,6 +359,48 @@ function Sync:BroadcastTestItem()
   return true
 end
 
+function Sync:ShareDatabaseWithParty(targetName)
+  if not targetName or targetName == "" then
+    addon:Print("Select a party member as your target first.")
+    return false
+  end
+  if not IsInGroup or not IsInGroup() then
+    addon:Print("Party share requires a party or raid.")
+    return false
+  end
+  local requestId = tostring(time()) .. tostring(math.random(100, 999))
+  self.pendingShareRequests = self.pendingShareRequests or {}
+  self.pendingShareRequests[requestId] = true
+  local request = string.format("WFGSHARE_REQ|%s|%s", requestId, targetName)
+  if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+    C_ChatInfo.SendAddonMessage(self.prefix, request, "PARTY")
+  elseif SendAddonMessage then
+    SendAddonMessage(self.prefix, request, "PARTY")
+  end
+  addon:Print("Party database share request sent to " .. targetName .. ".")
+  return true
+end
+
+function Sync:SendDatabaseToParty()
+  if not IsInGroup or not IsInGroup() then
+    return false
+  end
+  local export = self:Export()
+  local total = math.ceil(#export / self.shareChunkSize)
+  local shareId = tostring(time()) .. tostring(math.random(100, 999))
+  for index = 1, total do
+    local chunk = export:sub((index - 1) * self.shareChunkSize + 1, index * self.shareChunkSize)
+    local payload = string.format("WFGSHARE1|%s|%d|%d|%s", shareId, index, total, chunk)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+      C_ChatInfo.SendAddonMessage(self.prefix, payload, "PARTY")
+    elseif SendAddonMessage then
+      SendAddonMessage(self.prefix, payload, "PARTY")
+    end
+  end
+  addon:LootDebug(string.format("Party database share sent: chunks=%d bytes=%d", total, #export))
+  return true
+end
+
 function Sync:OnAddonMessage(prefix, message, channel, sender)
   if prefix ~= self.prefix or type(WforgedDB) ~= "table" then
     return
@@ -358,8 +412,71 @@ function Sync:OnAddonMessage(prefix, message, channel, sender)
     addon:LootDebug("Guild message ignored: sender is this player.")
     return
   end
-  if addon.DB:GetSettings().receiveGuildUpdates == false and channel == "GUILD" then
+  local settings = addon.DB:GetSettings()
+  if settings.receiveGuildUpdates == false and channel == "GUILD" then
     addon:LootDebug("Guild message ignored: receiving is disabled.")
+    return
+  end
+  if settings.receivePartyUpdates == false and (channel == "PARTY" or channel == "RAID") then
+    addon:LootDebug("Party message ignored: receiving is disabled.")
+    return
+  end
+
+  if channel == "PARTY" and message and message:sub(1, 10) == "WFGSHARE1|" then
+    local shareId, index, total, chunk = message:match("^WFGSHARE1|([^|]+)|(%d+)|(%d+)|(.+)$")
+    if shareId and index and total and chunk then
+      self.partyShares = self.partyShares or {}
+      local share = self.partyShares[shareId] or { total = tonumber(total), chunks = {}, count = 0 }
+      if not share.chunks[tonumber(index)] then
+        share.chunks[tonumber(index)] = chunk
+        share.count = share.count + 1
+      end
+      self.partyShares[shareId] = share
+      addon:LootDebug(string.format("Party database share received: %d/%d", share.count, share.total))
+      if share.count >= share.total then
+        local parts = {}
+        for part = 1, share.total do parts[#parts + 1] = share.chunks[part] or "" end
+        self:Import(table.concat(parts))
+        self.partyShares[shareId] = nil
+        addon:Print("Party database import complete.")
+      end
+    end
+    return
+  end
+
+  if channel == "PARTY" and message and message:sub(1, 13) == "WFGSHARE_REQ|" then
+    local requestId, targetName = message:match("^WFGSHARE_REQ|([^|]+)|(.+)$")
+    local playerName = UnitName and UnitName("player") or ""
+    if requestId and targetName and targetName == playerName then
+      StaticPopupDialogs.WFORGED_SHARE_CONFIRM = {
+        text = string.format("%s wants to send you the Wforged database.", tostring(sender or "A party member")),
+        button1 = ACCEPT,
+        button2 = CANCEL,
+        OnAccept = function()
+          local response = "WFGSHARE_ACK|" .. requestId
+          if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+            C_ChatInfo.SendAddonMessage("WFORGED", response, "PARTY")
+          elseif SendAddonMessage then
+            SendAddonMessage("WFORGED", response, "PARTY")
+          end
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+      }
+      StaticPopup_Show("WFORGED_SHARE_CONFIRM")
+    end
+    return
+  end
+
+  if channel == "PARTY" and message and message:sub(1, 13) == "WFGSHARE_ACK|" then
+    local requestId = message:sub(14)
+    self.pendingShareRequests = self.pendingShareRequests or {}
+    if self.pendingShareRequests[requestId] then
+      self.pendingShareRequests[requestId] = nil
+      self:SendDatabaseToParty()
+      addon:Print("Party database share approved; sending data.")
+    end
     return
   end
 

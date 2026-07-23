@@ -833,6 +833,8 @@ function SearchUI:RefreshSettings()
   end
   if self.frame.sendGuildCheckbox then self.frame.sendGuildCheckbox:SetChecked(settings.sendGuildUpdates ~= false) end
   if self.frame.receiveGuildCheckbox then self.frame.receiveGuildCheckbox:SetChecked(settings.receiveGuildUpdates ~= false) end
+  if self.frame.sendPartyCheckbox then self.frame.sendPartyCheckbox:SetChecked(settings.sendPartyUpdates == true) end
+  if self.frame.receivePartyCheckbox then self.frame.receivePartyCheckbox:SetChecked(settings.receivePartyUpdates == true) end
 end
 
 function SearchUI:ResetFilters()
@@ -994,6 +996,33 @@ function SearchUI:Toggle()
       addon.DB:GetSettings().receiveGuildUpdates = button:GetChecked() and true or false
     end)
 
+    frame.sendPartyCheckbox = createCheckbox(frame, "Send party updates")
+    frame.sendPartyCheckbox:SetPoint("TOPLEFT", frame.sendGuildCheckbox, "BOTTOMLEFT", 0, -8)
+    frame.sendPartyCheckbox:SetScript("OnClick", function(button)
+      addon.DB:GetSettings().sendPartyUpdates = button:GetChecked() and true or false
+    end)
+    frame.receivePartyCheckbox = createCheckbox(frame, "Receive party updates")
+    frame.receivePartyCheckbox:SetPoint("LEFT", frame.sendPartyCheckbox, "RIGHT", 180, 0)
+    frame.receivePartyCheckbox:SetScript("OnClick", function(button)
+      addon.DB:GetSettings().receivePartyUpdates = button:GetChecked() and true or false
+    end)
+    frame.sharePartyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    frame.sharePartyButton:SetSize(180, 22)
+    frame.sharePartyButton:SetPoint("TOPLEFT", frame.sendPartyCheckbox, "BOTTOMLEFT", 0, -8)
+    frame.sharePartyButton:SetText("Share database with party")
+    frame.sharePartyButton:SetScript("OnClick", function()
+      local targetName = UnitName and UnitName("target") or nil
+      if not targetName or not UnitIsPlayer or not UnitIsPlayer("target") then
+        addon:Print("Target a party member before sharing the database.")
+        return
+      end
+      if UnitInParty and not UnitInParty("target") and UnitInRaid and not UnitInRaid("target") then
+        addon:Print("The target must be in your party or raid.")
+        return
+      end
+      if addon.Sync and addon.Sync.ShareDatabaseWithParty then addon.Sync:ShareDatabaseWithParty(targetName) end
+    end)
+
     frame.resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     frame.resetButton:SetSize(90, 22)
     frame.resetButton:SetPoint("TOPRIGHT", -42, -106)
@@ -1079,7 +1108,7 @@ function SearchUI:Toggle()
     settings.devToggle:SetPoint("TOPRIGHT", -32, -5)
     settings.devToggle:SetText("Dev")
 
-    for _, control in ipairs({ frame.logsCheckbox, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.dataBox, frame.exportButton, frame.importButton }) do
+    for _, control in ipairs({ frame.logsCheckbox, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.sendPartyCheckbox, frame.receivePartyCheckbox, frame.sharePartyButton, frame.dataBox, frame.exportButton, frame.importButton }) do
       control:SetParent(settings)
     end
     settings.dataBackground = CreateFrame("Frame", nil, settings)
@@ -1179,7 +1208,7 @@ function SearchUI:Toggle()
     frame.exportButton:SetPoint("TOPLEFT", 426, -130)
     frame.importButton:SetPoint("TOPLEFT", 426, -158)
     local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton }
-    local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
+    local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.sendPartyCheckbox, frame.receivePartyCheckbox, frame.sharePartyButton, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
     local function setDebugVisible(visible)
       settings.debugVisible = visible and true or false
       for _, control in ipairs(debugControls) do
@@ -1203,9 +1232,11 @@ function SearchUI:Toggle()
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -328)
         frame.allMapItemsCheckbox:SetPoint("TOPLEFT", 18, -48)
         frame.receiveGuildCheckbox:SetPoint("TOPLEFT", 18, -88)
-        settings.dataBackground:SetPoint("TOPLEFT", 18, -130)
-        frame.exportButton:SetPoint("TOPLEFT", 426, -130)
-        frame.importButton:SetPoint("TOPLEFT", 426, -158)
+        frame.sendPartyCheckbox:SetPoint("TOPLEFT", 18, -120)
+        frame.receivePartyCheckbox:SetPoint("TOPLEFT", 300, -120)
+        settings.dataBackground:SetPoint("TOPLEFT", 18, -152)
+        frame.exportButton:SetPoint("TOPLEFT", 426, -152)
+        frame.importButton:SetPoint("TOPLEFT", 426, -180)
       end
       settings.devToggle:SetText(visible and "Player" or "Dev")
     end
@@ -1342,6 +1373,9 @@ function SearchUI:ApplyElvUISkin(frame)
     S:HandleCheckBox(frame.allMapItemsCheckbox)
     S:HandleCheckBox(frame.sendGuildCheckbox)
     S:HandleCheckBox(frame.receiveGuildCheckbox)
+    S:HandleCheckBox(frame.sendPartyCheckbox)
+    S:HandleCheckBox(frame.receivePartyCheckbox)
+    if S.HandleButton then S:HandleButton(frame.sharePartyButton) end
   end
   if frame.settings and frame.settings.dataBackground then
     frame.settings.dataBackground:SetSize(400, 100)
