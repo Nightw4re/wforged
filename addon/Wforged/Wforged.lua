@@ -82,6 +82,79 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "fix-corrupt-import" then
+    local changed = 0
+    local realm = GetRealmName and GetRealmName() or "Unknown"
+    local data = addon.DB and addon.DB.data
+    if data then
+      for _, entry in pairs(data.itemsByFingerprint or {}) do
+        local numericRealm = tonumber(entry.realm)
+        if entry.lastSource == "import" and numericRealm and numericRealm >= 0 and numericRealm <= 1 then
+          entry.realm = realm
+          changed = changed + 1
+          addon:LootDebug(string.format("Fixed corrupt import realm: id=%s %s -> %s", tostring(entry.itemId), tostring(numericRealm), tostring(realm)))
+        end
+      end
+    end
+    addon:Print("Fixed corrupt import records: " .. tostring(changed) .. ".")
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
+    return
+  end
+
+  local fixItemId = command:match("^fix%-item%s+(%d+)$")
+  if fixItemId then
+    local itemId = tonumber(fixItemId)
+    if addon.Sync and addon.Sync.RefreshItemInfo then
+      addon.Sync:RefreshItemInfo(itemId)
+    end
+    if addon.ItemScan and addon.ItemScan.RepairStoredItems then
+      addon.ItemScan:RepairStoredItems(itemId, 1)
+    end
+    addon:Print("Requested item data repair for item " .. tostring(itemId) .. ". Reopen the search window after the item data loads.")
+    return
+  end
+
+  local cleanItemId = command:match("^item%-clean%s+(%d+)$")
+  if cleanItemId then
+    local itemId = tonumber(cleanItemId)
+    local cleaned = 0
+    for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+      if entry and tonumber(entry.itemId) == itemId then
+        -- Keep location, timestamps, realm and upgrade relations. Only force
+        -- the client item/tooltip cache to be rebuilt on the next query.
+        entry.itemName = nil
+        entry.itemLink = nil
+        entry.itemTexture = nil
+        entry.quality = nil
+        entry.itemLevel = nil
+        entry.effectiveLevel = nil
+        entry.statsText = nil
+        entry.tooltipText = nil
+        entry.lastZoneName = nil
+        entry.zoneRepairPending = true
+        local points = addon.DB.data.spawnPointsByItem and addon.DB.data.spawnPointsByItem[entry.fingerprint]
+        for _, point in pairs(points or {}) do
+          point.zoneName = nil
+        end
+        cleaned = cleaned + 1
+      end
+    end
+    if cleaned > 0 and addon.DB.Save then addon.DB:Save() end
+    if addon.Sync and addon.Sync.RefreshItemInfo then
+      addon.Sync:RefreshItemInfo(itemId)
+    end
+    if addon.ItemScan and addon.ItemScan.RepairStoredItems then
+      addon.ItemScan:RepairStoredItems(itemId, 1)
+    end
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
+    addon:Print(string.format("Cleaned cached item data for %s variant(s) of item %d; location was preserved.", tostring(cleaned), itemId))
+    return
+  end
+
   local mapInfoId = command:match("^map%-info%s+(%d+)$")
   if mapInfoId then
     local mapId = tonumber(mapInfoId)

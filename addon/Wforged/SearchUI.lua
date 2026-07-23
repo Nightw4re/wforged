@@ -42,13 +42,28 @@ local function filterLabel(value, kind)
   return value
 end
 
+local function updateFilterVisual(button)
+  if not button then return end
+  local active = button.value and button.value ~= ""
+  local fontString = button.GetFontString and button:GetFontString() or nil
+  if fontString and fontString.SetTextColor then
+    fontString:SetTextColor(1, active and 0.82 or 1, active and 0 or 1, 1)
+  end
+  if button.SetBackdrop and button.SetBackdropColor and button.SetBackdropBorderColor then
+    button:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1})
+    button:SetBackdropColor(0.15, 0.12, 0.02, active and 0.85 or 0.35)
+    button:SetBackdropBorderColor(active and 1 or 0.25, active and 0.65 or 0.25, 0.05, 1)
+  end
+end
+
 local function createFilter(parent, kind, x, y)
   local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   button:SetSize(108, 22)
   button:SetPoint("TOPLEFT", x, y)
   button.kind = kind
-  button.value = ""
-  button:SetText(filterLabel("", kind))
+      button.value = ""
+      button:SetText(filterLabel("", kind))
+      updateFilterVisual(button)
   button.arrow = button:CreateTexture(nil, "OVERLAY")
   button.arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
   button.arrow:SetSize(12, 12)
@@ -73,6 +88,7 @@ local function createFilter(parent, kind, x, y)
         info.func = function()
           self.value = value
           self:SetText(filterLabel(value, kind))
+          updateFilterVisual(self)
           if SearchUI.filters then SearchUI.filters[kind] = value end
           SearchUI.page = 1
           SearchUI:Refresh()
@@ -219,12 +235,12 @@ local function buildShareText(result)
     return ""
   end
 
-  local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
+  local zoneName = result.zoneRepairPending and nil or (addon.ResolveZoneName and addon:ResolveZoneName(
     result.lastMapId,
     result.lastContinent,
     result.lastZone,
     result.lastZoneName
-  ) or result.lastZoneName
+  ) or result.lastZoneName)
 
   local locationParts = {}
   if zoneName and zoneName ~= "" then
@@ -258,6 +274,10 @@ local function hasUsableLocation(result)
     return false
   end
 
+  if result.zoneRepairPending or not result.lastZoneName or result.lastZoneName == "" then
+    return false
+  end
+
   if result.lastSource == "inventory" or result.lastSource == "equipped" then
     return false
   end
@@ -265,29 +285,23 @@ local function hasUsableLocation(result)
   if type(result.lastX) ~= "number" or type(result.lastY) ~= "number" then
     return false
   end
+  if not tonumber(result.lastMapId) then
+    return false
+  end
 
   if result.lastX <= 0 or result.lastX >= 1 or result.lastY <= 0 or result.lastY >= 1 then
     return false
   end
 
-  local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
-    result.lastMapId,
-    result.lastContinent,
-    result.lastZone,
-    result.lastZoneName
-  ) or result.lastZoneName
-
-  if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
-    return false
-  end
   return true
 end
 
 local function getLocationText(result)
   if not hasUsableLocation(result) then return "-" end
-  local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
+  if result.zoneRepairPending then return "unknown zone" end
+  local zoneName = result.zoneRepairPending and nil or (addon.ResolveZoneName and addon:ResolveZoneName(
     result.lastMapId, result.lastContinent, result.lastZone, result.lastZoneName
-  ) or result.lastZoneName
+  ) or result.lastZoneName)
   if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
     return "-"
   end
@@ -737,7 +751,13 @@ function SearchUI:Refresh(query)
           row.currencyButton:Hide()
         end
       else
-        row.locationText:SetText(getLocationText(result))
+        local locationText = getLocationText(result)
+        row.locationText:SetText(locationText)
+        if result.zoneRepairPending and locationText == "unknown zone" then
+          row.locationText:SetTextColor(0.55, 0.55, 0.55)
+        else
+          row.locationText:SetTextColor(1, 0.82, 0)
+        end
         row.locationText:SetJustifyH("LEFT")
         row.locationText:SetWidth(263)
         row.findButton:ClearAllPoints()
@@ -824,6 +844,7 @@ function SearchUI:ResetFilters()
     self.filters[kind] = ""
     button.value = ""
     button:SetText(filterLabel("", kind))
+    updateFilterVisual(button)
   end
   self.frame.editBox:SetText("")
   self.suppressRefresh = nil
@@ -920,6 +941,7 @@ function SearchUI:Toggle()
       self.filters[kind] = state.filters and state.filters[kind] or ""
       frame.filters[kind].value = self.filters[kind]
       frame.filters[kind]:SetText(filterLabel(self.filters[kind], kind))
+      updateFilterVisual(frame.filters[kind])
       local originalClick = frame.filters[kind]:GetScript("OnClick")
       frame.filters[kind]:SetScript("OnClick", function(button)
         self.filters[kind] = button.value or ""

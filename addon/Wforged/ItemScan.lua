@@ -553,13 +553,34 @@ function ItemScan:RepairZoneNamesFromOpenMap()
   local repaired = 0
   for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
     local mapId = tonumber(entry.lastMapId)
-    if entry.isWorldforged and mapId and (mapId == currentId or mapId + 1 == currentId)
+    local mapMatches = mapId and (mapId == currentId or mapId + 1 == currentId or mapId - 1 == currentId)
+    if entry.isWorldforged and mapMatches
       and tonumber(entry.lastX) and tonumber(entry.lastY)
-      and (not entry.lastZoneName or isGenericZoneName(entry.lastZoneName)) then
+      and entry.lastZoneName ~= name then
+      local oldName = entry.lastZoneName
       entry.lastZoneName = name
+      entry.zoneRepairPending = nil
       repaired = repaired + 1
-      addon:LootDebug(string.format("Interactive zone repair: mapId=%s -> %s", tostring(mapId), tostring(name)))
+      addon:LootDebug(string.format("Interactive zone repair: mapId=%s %s -> %s", tostring(mapId), tostring(oldName or "nil"), tostring(name)))
+
+      -- Search prefers spawn-point records over the item entry. Keep both
+      -- representations in sync or the table can still show an empty zone.
+      local points = addon.DB.data.spawnPointsByItem and addon.DB.data.spawnPointsByItem[entry.fingerprint]
+      for _, point in pairs(points or {}) do
+        local pointMap = tonumber(point.mapId)
+        local pointX = tonumber(point.x)
+        local pointY = tonumber(point.y)
+        if pointMap and pointX and pointY
+          and (pointMap == currentId or pointMap + 1 == currentId)
+          and math.abs(pointX - tonumber(entry.lastX)) < 0.0001
+          and math.abs(pointY - tonumber(entry.lastY)) < 0.0001 then
+          point.zoneName = name
+        end
+      end
     end
+  end
+  if repaired > 0 and addon.DB and addon.DB.Save then
+    addon.DB:Save()
   end
   if repaired > 0 and addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
     addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")

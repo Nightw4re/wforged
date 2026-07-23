@@ -337,7 +337,8 @@ local function setMapToZoneName(zoneName)
     return false
   end
 
-  for continent = 1, 8 do
+  local continentNames = GetMapContinents and { GetMapContinents() } or {}
+  for continent = 1, #continentNames do
     local zones = { GetMapZones(continent) }
     if #zones > 0 then
       for zone = 1, #zones do
@@ -350,7 +351,7 @@ local function setMapToZoneName(zoneName)
     end
   end
 
-  for continent = 1, 8 do
+  for continent = 1, #continentNames do
     SetMapZoom(continent)
     local zones = { GetMapZones(continent) }
     for zone = 1, #zones do
