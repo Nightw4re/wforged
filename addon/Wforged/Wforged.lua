@@ -90,6 +90,59 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "cleanup" or command == "cleanup confirm" then
+    addon:Print("Cleanup is temporarily disabled. No data was changed.")
+    return
+  end
+
+  local inspectId = command:match("^inspect%s+(%d+)$")
+  if inspectId then
+    local found = 0
+    for fingerprint, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
+      if tonumber(entry.itemId) == tonumber(inspectId) then
+        found = found + 1
+        addon:Print(string.format(
+          "Inspect id=%s name=%s realm=%s source=%s upgrade=%s map=%s continent=%s zone=%s zoneName=%s x=%s y=%s quality=%s level=%s",
+          tostring(entry.itemId), tostring(entry.itemName or "?"), tostring(entry.realm or "?"),
+          tostring(entry.lastSource or "?"), tostring(entry.isUpgrade or entry.upgradeLevel or 0),
+          tostring(entry.lastMapId or "nil"), tostring(entry.lastContinent or "nil"),
+          tostring(entry.lastZone or "nil"), tostring(entry.lastZoneName or "nil"),
+          tostring(entry.lastX or "nil"), tostring(entry.lastY or "nil"),
+          tostring(entry.quality or "nil"), tostring(entry.itemLevel or "nil")
+        ))
+        addon:LootDebug("Inspect fingerprint: " .. tostring(fingerprint))
+      end
+    end
+    addon:Print(string.format("Inspect found %d variant(s).", found))
+    return
+  end
+
+  local removeId = command:match("^remove%s+(%d+)$")
+  if removeId then
+    local removed = addon.DB:RemoveItemById(removeId)
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
+    if addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+      addon.MapNotes:RefreshAllMarkers()
+    end
+    addon:Print(string.format("Removed item %s (%d variants).", removeId, removed))
+    return
+  end
+
+  local removeName = rawMessage:match('^remove%-name%s+(.+)$')
+  if removeName and removeName ~= "" then
+    local removed = addon.DB:RemoveItemsByName(removeName)
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
+    if addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+      addon.MapNotes:RefreshAllMarkers()
+    end
+    addon:Print(string.format("Removed item name %s (%d variants).", removeName, removed))
+    return
+  end
+
   local summary = addon.DB:GetSummary()
   addon:Print(string.format(
     "Items: %d, spawn points: %d, vendors: %d, observations: %d, pending: %d",
@@ -159,6 +212,9 @@ registerEvent("PLAYER_LOGIN", function(self)
         if repaired == 0 and self.ItemScan.zoneRepairQueue and self.ItemScan.RepairStoredZoneNames then
           self.ItemScan:RepairStoredZoneNames(1)
         end
+      end
+      if self.ItemScan and self.ItemScan.RetryPendingItems then
+        self.ItemScan:RetryPendingItems(nil, 1)
       end
       if self.SearchUI and self.SearchUI.UpdateRepairIndicator then
         self.SearchUI:UpdateRepairIndicator()

@@ -23,6 +23,9 @@ local worldforgedMarkers = {
   "worldforged",
 }
 
+local maxPendingRetryAttempts = 20
+local pendingRetryTimeoutSeconds = 10
+
 local function collectTooltipData(itemLink)
   if not itemLink then
     return nil, nil
@@ -90,6 +93,25 @@ local function isItemInfoReady(itemName, itemLevel)
   return itemName ~= nil and itemLevel ~= nil
 end
 
+local function getItemInfo(itemId, itemLink)
+  if not GetItemInfo then
+    return nil
+  end
+
+  -- The legacy client requests item data more reliably by numeric ID than by
+  -- a hyperlink copied from chat or an imported database.
+  if itemId then
+    local itemName, link, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipSlot, texture = GetItemInfo(itemId)
+    if itemName then
+      return itemName, link, quality, itemLevel, minLevel, itemType, itemSubType, stackCount, equipSlot, texture
+    end
+  end
+  if itemLink then
+    return GetItemInfo(itemLink)
+  end
+  return nil
+end
+
 local function tooltipContainsWorldforgedMarker(itemLink)
   if not itemLink then
     return false
@@ -138,6 +160,8 @@ local function debugDumpTooltip(itemLink)
   end
 end
 
+local tooltipContainsBindOnPickup
+
 function ItemScan:IsWorldforgedItem(itemLink, skipDebugDump)
   if not itemLink then
     return false
@@ -147,7 +171,23 @@ function ItemScan:IsWorldforgedItem(itemLink, skipDebugDump)
     debugDumpTooltip(itemLink)
   end
 
-  return tooltipContainsWorldforgedMarker(itemLink)
+  return tooltipContainsWorldforgedMarker(itemLink) and tooltipContainsBindOnPickup(itemLink)
+end
+
+tooltipContainsBindOnPickup = function(itemLink)
+  if not itemLink then return false end
+  tooltip:ClearLines()
+  tooltip:SetHyperlink(itemLink)
+  for lineIndex = 2, tooltip:NumLines() do
+    local leftRegion = _G["WforgedScanTooltipTextLeft" .. lineIndex]
+    local rightRegion = _G["WforgedScanTooltipTextRight" .. lineIndex]
+    local leftText = string.lower(leftRegion and leftRegion:GetText() or "")
+    local rightText = string.lower(rightRegion and rightRegion:GetText() or "")
+    if leftText:find("binds when picked up", 1, true) or rightText:find("binds when picked up", 1, true) then
+      return true
+    end
+  end
+  return false
 end
 
 function ItemScan:FinalizePendingRecord(record)
@@ -155,8 +195,8 @@ function ItemScan:FinalizePendingRecord(record)
     return nil
   end
 
-  local itemName, _, quality, itemLevel, _, _, _, _, _, itemTexture = GetItemInfo(record.itemLink)
   local itemId = extractItemId(record.itemLink) or record.itemId
+  local itemName, _, quality, itemLevel, _, _, _, _, _, itemTexture = getItemInfo(itemId, record.itemLink)
   if not isItemInfoReady(itemName, itemLevel) then
     addon:LootDebug("Waiting for item info: " .. tostring(record.itemLink))
     return nil
@@ -177,10 +217,15 @@ function ItemScan:FinalizePendingRecord(record)
     itemTexture = itemTexture,
     isWorldforged = record.isWorldforged or self:IsWorldforgedItem(record.itemLink, true),
     upgradeCandidate = record.upgradeCandidate,
+    upgradeCost = record.upgradeCost,
+    upgradeCurrency = record.upgradeCurrency,
+    sourceItemId = record.sourceItemId,
+    sourceItemName = record.sourceItemName,
     quality = quality,
     itemLevel = itemLevel,
     effectiveLevel = effectiveLevel,
     upgradeLevel = upgradeLevel,
+    isUpgrade = record.isUpgrade,
     statsText = statsText,
     tooltipText = tooltipText,
     sourceType = record.sourceType or "manual",
@@ -287,7 +332,7 @@ function ItemScan:RepairStoredItem(itemId, entry)
     return repairedZone
   end
 
-  local itemName, itemLink, quality, itemLevel, _, _, _, _, _, itemTexture = GetItemInfo(itemId)
+  local itemName, itemLink, quality, itemLevel, _, _, _, _, _, itemTexture = getItemInfo(itemId, entry.itemLink)
   if not isItemInfoReady(itemName, itemLevel) or not itemLink then
     return repairedZone
   end
@@ -362,11 +407,17 @@ function ItemScan:RepairStoredItems(itemId, limit)
 end
 
 function ItemScan:GetRepairStatus()
+  local pendingItems = addon.DB and addon.DB.GetPendingItems and addon.DB:GetPendingItems() or {}
+  local pendingCount = 0
+  for _ in pairs(pendingItems or {}) do pendingCount = pendingCount + 1 end
   if self.repairQueue then
     local pending = #self.repairQueue
     if pending > 0 then
-      return "active", pending
+      return "active", pending + pendingCount
     end
+  end
+  if pendingCount > 0 then
+    return "active", pendingCount
   end
   if self.repairQueueInitialized then
     return "complete", 0
@@ -515,6 +566,7 @@ function ItemScan:QueuePendingItem(itemLink, sourceType, context)
     zone = storedZone,
     zoneName = storedZoneName,
     upgradeLevel = context and context.upgradeLevel or nil,
+    isUpgrade = context and context.isUpgrade or nil,
     isWorldforged = context and context.isWorldforged or nil,
     upgradeCandidate = context and context.upgradeCandidate or nil,
   }
@@ -610,16 +662,42 @@ function ItemScan:CaptureLootMessage(message)
   return found
 end
 
-function ItemScan:RetryPendingItems(itemId)
+function ItemScan:RetryPendingItems(itemId, limit)
   local pendingItems = addon.DB:GetPendingItems()
+  local processed = 0
+  local now = time()
   for pendingKey, record in pairs(pendingItems) do
-    if not itemId or tostring(record.itemId) == tostring(itemId) then
+    if (not record.nextRetryAt or record.nextRetryAt <= now)
+      and (not itemId or tostring(record.itemId) == tostring(itemId)) then
       addon:LootDebug(string.format(
         "Retry pending item %s for itemId=%s",
         tostring(pendingKey),
         tostring(itemId or record.itemId or "?")
       ))
-      self:FinalizePendingRecord(record)
+      local result = self:FinalizePendingRecord(record)
+      if not result then
+        record.retryAttempts = (record.retryAttempts or 0) + 1
+        record.retryDeadlineAt = record.retryDeadlineAt or (now + pendingRetryTimeoutSeconds)
+        if record.retryAttempts >= maxPendingRetryAttempts or now >= record.retryDeadlineAt then
+          addon:LootDebug(string.format(
+            "Pending item abandoned after timeout: attempts=%d id=%s link=%s",
+            record.retryAttempts,
+            tostring(record.itemId or "?"),
+            tostring(record.itemLink or "?")
+          ))
+          addon.DB:RemovePendingItem(pendingKey)
+        else
+          record.nextRetryAt = now + 1
+        end
+      else
+        record.retryAttempts = nil
+        record.nextRetryAt = nil
+        record.retryDeadlineAt = nil
+      end
+      processed = processed + 1
+      if not itemId and limit and processed >= limit then
+        break
+      end
     end
   end
 end
