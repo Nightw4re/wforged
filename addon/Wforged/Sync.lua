@@ -81,13 +81,19 @@ local function decodePayload(fields)
   local observedAt = hasLocation and fields[6] or fields[3]
   local realm = hasLocation and fields[7] or fields[4]
   local mapId = hasLocation and tonumber(fields[3]) or nil
+  local upgradeCost = hasLocation and tonumber(fields[9]) or tonumber(fields[8])
+  local upgradeCurrency = hasLocation and fields[10] or fields[9]
+  local upgradeLevel = hasLocation and tonumber(fields[11]) or tonumber(fields[10]) or 0
+  local fingerprint = fields[12] or fields[11]
   return {
-    fingerprint = string.format("id:%d", itemId or 0),
+    fingerprint = fingerprint ~= "" and fingerprint or string.format("id:%d", itemId or 0),
     itemId = itemId, itemName = itemName, itemLink = itemLink,
     itemTexture = itemTexture, quality = quality, itemLevel = itemLevel,
     effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId,
     x = hasLocation and tonumber(fields[4]) or nil, y = hasLocation and tonumber(fields[5]) or nil,
     zoneName = knownZoneName or fields[8],
+    upgradeCost = upgradeCost, upgradeCurrency = upgradeCurrency,
+    isUpgrade = upgradeLevel > 0 or upgradeCost ~= nil,
     zoneRepairPending = hasLocation and not knownZoneName or false,
     observedAt = tonumber(observedAt) or time(), isWorldforged = true, realm = realm ~= "" and realm or "Unknown",
   }
@@ -194,7 +200,7 @@ local function makeBroadcastPayload(entry)
   return table.concat({ "WFGDB8", realm, mapId, encode(entry.lastZoneName or ""), x, y, item }, "|")
 end
 
-function Sync:Import(textValue)
+function Sync:Import(textValue, context)
   if type(textValue) ~= "string" then return 0, "invalid format" end
   textValue = textValue:gsub("^%s+", ""):gsub("%s+$", "")
   if textValue:sub(1, 5) == "WFG6|" then
@@ -262,6 +268,7 @@ function Sync:Import(textValue)
     return tostring(left[2] or "") < tostring(right[2] or "")
   end)
   for _, fields in ipairs(importedRecords) do
+    fields.importSource = context and context.source or "manual"
     self.pendingImports[#self.pendingImports + 1] = fields
   end
   addon:LootDebug(string.format("Import scan: records=%d queued=%d firstType=%s firstId=%s", scanned, queued, tostring(firstType), tostring(firstId)))
@@ -273,6 +280,13 @@ end
 
 function Sync:ImportLast()
   return self:Import(self.testImport)
+end
+
+local function databaseHasItemId(itemId)
+  for _, entry in pairs(addon.DB and addon.DB.data and addon.DB.data.itemsByFingerprint or {}) do
+    if tonumber(entry.itemId) == tonumber(itemId) then return true end
+  end
+  return false
 end
 
 function Sync:ProcessImportQueue(elapsed)
@@ -292,6 +306,16 @@ function Sync:ProcessImportQueue(elapsed)
     self.pendingImportIndex = self.pendingImportIndex + 1
     local payload = decodePayload(fields)
     if payload then
+      local partyImport = fields.importSource == "party"
+      if partyImport then
+        self.partyImportStats = self.partyImportStats or { newItems = 0, located = 0 }
+        if not databaseHasItemId(payload.itemId) then
+          self.partyImportStats.newItems = self.partyImportStats.newItems + 1
+          if payload.mapId and payload.x and payload.y then
+            self.partyImportStats.located = self.partyImportStats.located + 1
+          end
+        end
+      end
       addon:LootDebug(string.format("Import decoded: id=%s name=%s map=%s x=%s y=%s time=%s quality=%s level=%s", tostring(payload.itemId), tostring(payload.itemName), tostring(payload.mapId), tostring(payload.x), tostring(payload.y), tostring(payload.observedAt), tostring(payload.quality), tostring(payload.itemLevel)))
       self:MergeRemoteItem(payload)
       if addon.ItemScan and addon.ItemScan.FinalizePendingRecord and payload.itemLink then
@@ -306,7 +330,15 @@ function Sync:ProcessImportQueue(elapsed)
     local total = #self.pendingImports
     self.pendingImports = {}
     self.pendingImportIndex = 1
-    addon:Print("Import complete: " .. tostring(total) .. " items processed.")
+    if self.partyImportStats then
+      addon:Print(string.format(
+        "Party database import complete: %d new item(s), %d with location.",
+        self.partyImportStats.newItems, self.partyImportStats.located
+      ))
+      self.partyImportStats = nil
+    else
+      addon:Print("Import complete: " .. tostring(total) .. " items processed.")
+    end
     if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
       addon.ItemScan:ResetZoneNameRepair()
     end
@@ -461,7 +493,11 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
         local parts = {}
         for part = 1, share.total do parts[#parts + 1] = share.chunks[part] or "" end
         local data = table.concat(parts)
-        if data:sub(1, 7) == "WFGDB8;" then self:Import(data) else addon:Print("Party database share rejected: invalid data.") end
+        if data:sub(1, 7) == "WFGDB8;" then
+          self:Import(data, { source = "party" })
+        else
+          addon:Print("Party database share rejected: invalid data.")
+        end
         self.partyShares[shareId] = nil
         addon:Print("Party database import complete.")
       end

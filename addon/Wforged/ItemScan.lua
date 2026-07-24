@@ -196,6 +196,10 @@ function ItemScan:FinalizePendingRecord(record)
   end
 
   local itemId = extractItemId(record.itemLink) or record.itemId
+  -- Trigger the legacy client's item-data request before checking GetItemInfo.
+  -- Without this, data may load only after the player manually hovers the item.
+  tooltip:ClearLines()
+  tooltip:SetHyperlink(record.itemLink)
   local itemName, _, quality, itemLevel, _, _, _, _, _, itemTexture = getItemInfo(itemId, record.itemLink)
   if not isItemInfoReady(itemName, itemLevel) then
     addon:LootDebug("Waiting for item info: " .. tostring(record.itemLink))
@@ -694,6 +698,20 @@ function ItemScan:QueuePendingItem(itemLink, sourceType, context)
     isWorldforged = context and context.isWorldforged or nil,
     upgradeCandidate = context and context.upgradeCandidate or nil,
   }
+
+  -- Vendor frames are scanned repeatedly while item data is loading. Do not
+  -- run the same tooltip request from both the vendor scan and retry queue.
+  -- Keep the latest cost metadata; the retry queue owns the actual load.
+  if sourceType == "upgrade-frame" then
+    local pending = addon.DB:GetPendingItems()[pendingKey]
+    if pending and pending.retryDeadlineAt then
+      pending.upgradeCost = payload.upgradeCost or pending.upgradeCost
+      pending.upgradeCurrency = payload.upgradeCurrency or pending.upgradeCurrency
+      pending.sourceItemId = payload.sourceItemId or pending.sourceItemId
+      pending.sourceItemName = payload.sourceItemName or pending.sourceItemName
+      return nil
+    end
+  end
 
   addon.DB:UpsertPendingItem(pendingKey, payload)
   addon:LootDebug(string.format(
