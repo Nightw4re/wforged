@@ -1309,6 +1309,15 @@ function SearchUI:Toggle()
   if self.frame:IsShown() then
     self.frame:Hide()
   else
+    -- ElvUI can keep the map background behind addon panels while its controls
+    -- remain visible. Close the map before showing the search window.
+    if WorldMapFrame and WorldMapFrame:IsShown() then
+      if HideUIPanel then
+        HideUIPanel(WorldMapFrame)
+      else
+        WorldMapFrame:Hide()
+      end
+    end
     self:RefreshSettings()
     self.frame:Show()
     self.frame.editBox:SetText(self.frame.editBox:GetText() or "")
@@ -1320,6 +1329,11 @@ end
 function SearchUI:ToggleSettings()
   if not self.frame then
     self:Toggle()
+    -- Toggle() creates the shared frame and opens the list on first use.
+    -- Settings opened from the minimap should show only the settings panel.
+    if self.frame then
+      self.frame:Hide()
+    end
   end
   if self.frame and self.frame.settings then
     self.frame.settings:Show()
