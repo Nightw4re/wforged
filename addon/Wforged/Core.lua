@@ -118,7 +118,7 @@ function addon:RegisterEvent(eventName, handler)
   eventFrame[eventName] = handler
 end
 
-function addon:ResolveZoneName(mapId, continent, zone, zoneName)
+function addon:ResolveZoneName(mapId, continent, zone, zoneName, allowCurrentFallback)
   local genericName = type(zoneName) == "string" and zoneName:match("^Map %d+$")
   if zoneName and zoneName ~= "" and not genericName then
     return zoneName
@@ -135,6 +135,34 @@ function addon:ResolveZoneName(mapId, continent, zone, zoneName)
     local resolved = GetMapNameByID(mapId)
     if resolved and resolved ~= "" then
       return resolved
+    end
+  end
+
+  if mapId and GetMapName then
+    local resolved = GetMapName(mapId)
+    if resolved and resolved ~= "" and not tostring(resolved):match("^Map %d+$") then
+      return resolved
+    end
+  end
+
+  -- GetMapInfo() is current-map-only on this client. It is safe to use only
+  -- when the current map ID matches the requested one. Ascension's custom
+  -- zone maps can expose the loaded detail map as mapId + 1.
+  if allowCurrentFallback ~= false and mapId and GetCurrentMapAreaID and GetMapInfo
+    and (tonumber(GetCurrentMapAreaID()) == tonumber(mapId)
+      or tonumber(GetCurrentMapAreaID()) == tonumber(mapId) + 1) then
+    if GetCurrentMapContinent and GetCurrentMapZone and GetMapZones then
+      local currentContinent = GetCurrentMapContinent()
+      local currentZone = GetCurrentMapZone()
+      local zones = currentContinent and { GetMapZones(currentContinent) } or nil
+      local localizedName = zones and currentZone and zones[currentZone] or nil
+      if localizedName and localizedName ~= "" then
+        return localizedName
+      end
+    end
+    local currentName = GetMapInfo()
+    if currentName and currentName ~= "" and not tostring(currentName):match("^Map %d+$") then
+      return currentName
     end
   end
 
@@ -282,6 +310,9 @@ local function ensureMapPin()
     end)
     WorldMapFrame:HookScript("OnUpdate", function()
       if not WorldMapDetailFrame or not WorldMapFrame:IsShown() then return end
+      if addon.ItemScan and addon.ItemScan.RepairZoneNamesFromOpenMap then
+        addon.ItemScan:RepairZoneNamesFromOpenMap()
+      end
       local width = WorldMapDetailFrame:GetWidth()
       local height = WorldMapDetailFrame:GetHeight()
       if addon.MapNotes.lastMapWidth ~= width or addon.MapNotes.lastMapHeight ~= height then
@@ -306,7 +337,8 @@ local function setMapToZoneName(zoneName)
     return false
   end
 
-  for continent = 1, 8 do
+  local continentNames = GetMapContinents and { GetMapContinents() } or {}
+  for continent = 1, #continentNames do
     local zones = { GetMapZones(continent) }
     if #zones > 0 then
       for zone = 1, #zones do
@@ -319,7 +351,7 @@ local function setMapToZoneName(zoneName)
     end
   end
 
-  for continent = 1, 8 do
+  for continent = 1, #continentNames do
     SetMapZoom(continent)
     local zones = { GetMapZones(continent) }
     for zone = 1, #zones do
@@ -553,6 +585,10 @@ function addon.MapNotes:ShowOnMap(result, isTemporary)
   end
 
   local zoneName = resolveZoneName(result)
+  if not zoneName and not (result.lastContinent and result.lastZone) and not result.lastMapId then
+    addon:Print("Selected item has no verified map or zone data.")
+    return false
+  end
   if not usesContinentFallback(result) and zoneName and setMapToZoneName(zoneName) then
     addon:LootDebug(string.format("Map jump via zoneName: %s", tostring(zoneName)))
   elseif result.lastContinent and result.lastZone and SetMapZoom then
@@ -691,7 +727,16 @@ function addon.MinimapButton:Create()
 
 
   button:SetScript("OnClick", function(_, mouseButton)
-    if mouseButton == "RightButton" and addon.SearchUI and addon.SearchUI.ToggleSettings then
+    if mouseButton == "LeftButton" and IsShiftKeyDown and IsShiftKeyDown() then
+      WforgedDB.showAllMapItems = not WforgedDB.showAllMapItems
+      if addon.MapNotes and addon.MapNotes.allMapCheckbox then
+        addon.MapNotes.allMapCheckbox:SetChecked(WforgedDB.showAllMapItems and true or false)
+      end
+      if addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+        addon.MapNotes:RefreshAllMarkers()
+      end
+      addon:Print("Show all map items: " .. (WforgedDB.showAllMapItems and "enabled" or "disabled"))
+    elseif mouseButton == "RightButton" and addon.SearchUI and addon.SearchUI.ToggleSettings then
       addon.SearchUI:ToggleSettings()
     elseif addon.SearchUI and addon.SearchUI.Toggle then
       addon.SearchUI:Toggle()
@@ -702,6 +747,7 @@ function addon.MinimapButton:Create()
     GameTooltip:SetOwner(selfButton, "ANCHOR_LEFT")
     GameTooltip:SetText("Wforged")
     GameTooltip:AddLine("Left click: search items", 1, 1, 1)
+    GameTooltip:AddLine("Shift + left click: show all map items", 1, 1, 1)
     GameTooltip:AddLine("Right click: settings", 1, 1, 1)
     GameTooltip:AddLine("Drag: move around minimap", 0.8, 0.8, 0.8)
     GameTooltip:Show()

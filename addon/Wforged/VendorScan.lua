@@ -3,7 +3,7 @@ local addonName, addon = ...
 local VendorScan = {}
 addon.VendorScan = VendorScan
 
-VendorScan.frameScanInterval = 0.5
+VendorScan.frameScanInterval = 1.0
 
 local function collectChildFrames(root, output, depth, maxDepth)
   if not root or depth > maxDepth or not root.GetChildren then
@@ -416,6 +416,20 @@ function VendorScan:ScanUpgradeFrameContents()
         isUpgrade = true,
         itemTexture = itemTexture,
       })
+      if candidate.parsedCost then
+        local repairedExisting = 0
+        for _, existing in pairs(addon.DB.data.itemsByFingerprint or {}) do
+          if existing and tonumber(existing.itemId) == tonumber(candidate.itemId) then
+            existing.upgradeCost = candidate.parsedCost
+            existing.upgradeCurrency = "rune"
+            existing.isUpgrade = true
+            repairedExisting = repairedExisting + 1
+          end
+        end
+        if repairedExisting > 0 then
+          addon:LootDebug(string.format("Upgrade cost repaired from vendor offer: itemId=%s cost=%s variants=%d", tostring(candidate.itemId), tostring(candidate.parsedCost), repairedExisting))
+        end
+      end
       captured = captured + 1
     end
   end
@@ -426,6 +440,7 @@ function VendorScan:ScanUpgradeFrameContents()
 
   if captured > 0 then
     addon:LootDebug("Upgrade frame scan captured items: " .. tostring(captured))
+    if addon.DB and addon.DB.Save then addon.DB:Save() end
   end
 
   return captured

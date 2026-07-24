@@ -4,9 +4,23 @@ local Sync = {}
 addon.Sync = Sync
 
 Sync.prefix = "WFORGED"
-Sync.exportFormat = "WFGDB7"
+Sync.exportFormat = "WFGDB8"
 Sync.importBatchSize = 2
 Sync.importInterval = 0.5
+Sync.shareChunkSize = 180
+Sync.shareChunkDelay = 0.15
+
+local function shareChecksum(value)
+  local sum = 0
+  for index = 1, #value do
+    sum = (sum + string.byte(value, index)) % 2147483647
+  end
+  return tostring(sum)
+end
+
+local function shortName(value)
+  return tostring(value or ""):gsub("%-.*$", "")
+end
 Sync.testImport = "WFGDB6;WFG6|450559|40|0.7154|0.7379|1784222003;WFG6|450557|40|0.5317|0.7906|1784195081;WFG6|450748|40|0.6078|0.5827|1784194402;WFG6|1388996||1784192678;WFG6|1388679||1784192678;WFG6|450934||1784192669;WFG6|521267||1784192669;WFG6|450556|40|0.428|0.885|1784221802;WFG6|1388570||1784192678;WFG6|450555|40|0.3356|0.8647|1784221687;WFG6|1388779||1784192678;WFG6|450551||1784192669;WFG6|515681||1784192669;WFG6|1388546||1784192678;WFG6|515687|40|0.3573|0.904|1784221326;WFG6|450564|40|0.4137|0.6647|1784197106;WFG6|515430||1784192669;WFG6|450562|40|0.4007|0.68|1784194762;WFG6|451117||1784192669;WFG6|450593|35|0.1914|0.5561|1784222456;WFG6|450563|15|0.409|0.8196|1784200008;WFG6|515684|40|0.7007|0.7482|1784222170;WFG6|450528||1784192669;WFG6|450594|35|0.1747|0.5636|1784222299;WFG6|1388997||1784192678;WFG6|450673||1784192669;WFG6|1389367||1784192678;WFG6|450909||1784192669;WFG6|1388771||1784192678;WFG6|515429||1784192669"
 
 local function encode(value)
@@ -50,6 +64,14 @@ local function decodePayload(fields)
     return nil
   end
   local itemId = tonumber(fields[2])
+  local knownZoneName
+  for _, existing in pairs(addon.DB.data.itemsByFingerprint or {}) do
+    if existing and tonumber(existing.itemId) == itemId and not existing.zoneRepairPending and existing.lastZoneName
+      and existing.lastZoneName ~= "" and not existing.lastZoneName:match("^Map %d+$") then
+      knownZoneName = existing.lastZoneName
+      break
+    end
+  end
   local itemName = itemId and GetItemInfo(itemId) or nil
   itemName = itemName or ("Item #" .. tostring(itemId or "?"))
   local itemLink = itemId and string.format("|Hitem:%d:0:0:0:0:0:0:0:0|h[%s]|h", itemId, itemName) or nil
@@ -59,22 +81,14 @@ local function decodePayload(fields)
   local observedAt = hasLocation and fields[6] or fields[3]
   local realm = hasLocation and fields[7] or fields[4]
   local mapId = hasLocation and tonumber(fields[3]) or nil
-  local zoneName = mapId and GetMapNameByID and GetMapNameByID(mapId) or nil
-  if not zoneName and mapId and addon.ResolveZoneName then
-    zoneName = addon:ResolveZoneName(mapId, nil, nil, nil)
-  end
-  local knownZoneNames = {
-    [15] = "The Deadmines",
-    [35] = "Duskwood",
-    [40] = "Westfall",
-  }
-  zoneName = zoneName or (mapId and knownZoneNames[mapId]) or nil
   return {
     fingerprint = string.format("id:%d", itemId or 0),
     itemId = itemId, itemName = itemName, itemLink = itemLink,
     itemTexture = itemTexture, quality = quality, itemLevel = itemLevel,
-    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId, zoneName = zoneName,
+    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId,
     x = hasLocation and tonumber(fields[4]) or nil, y = hasLocation and tonumber(fields[5]) or nil,
+    zoneName = knownZoneName or fields[8],
+    zoneRepairPending = hasLocation and not knownZoneName or false,
     observedAt = tonumber(observedAt) or time(), isWorldforged = true, realm = realm ~= "" and realm or "Unknown",
   }
 end
@@ -148,23 +162,24 @@ function Sync:BroadcastSummary(channel)
 end
 
 function Sync:Export()
-  addon:LootDebug("Export format: WFGDB7 / grouped locations")
+  addon:LootDebug("Export format: " .. tostring(self.exportFormat) .. " / grouped locations")
   local groups = {}
   for fingerprint, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
     if entry.isWorldforged and entry.itemId and entry.lastMapId and entry.lastX and entry.lastY then
       local realm = encode(entry.realm or "Unknown")
       local mapId = encode(entry.lastMapId)
+      local zoneName = encode(entry.lastZoneName or "")
       local x = encode(entry.lastX)
       local y = encode(entry.lastY)
-      local key = table.concat({ realm, mapId, x, y }, "|")
-      groups[key] = groups[key] or { realm = realm, mapId = mapId, x = x, y = y, items = {} }
+      local key = table.concat({ realm, mapId, zoneName, x, y }, "|")
+      groups[key] = groups[key] or { realm = realm, mapId = mapId, zoneName = zoneName, x = x, y = y, items = {} }
       groups[key].items[#groups[key].items + 1] = table.concat({ entry.itemId, tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0 }, ":")
     end
   end
-  local parts = { "WFGDB7" }
+  local parts = { "WFGDB8" }
   for _, group in pairs(groups) do
     table.sort(group.items)
-    parts[#parts + 1] = table.concat({ group.realm, group.mapId, group.x, group.y, table.concat(group.items, ",") }, "|")
+    parts[#parts + 1] = table.concat({ group.realm, group.mapId, group.zoneName, group.x, group.y, table.concat(group.items, ",") }, "|")
   end
   return table.concat(parts, ";")
 end
@@ -176,7 +191,7 @@ local function makeBroadcastPayload(entry)
   end
   local realm = encode(entry.realm or "Unknown")
   local item = string.format("%d:%d", entry.itemId, tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0)
-  return table.concat({ "WFGDB7", realm, mapId, x, y, item }, "|")
+  return table.concat({ "WFGDB8", realm, mapId, encode(entry.lastZoneName or ""), x, y, item }, "|")
 end
 
 function Sync:Import(textValue)
@@ -186,7 +201,7 @@ function Sync:Import(textValue)
     textValue = "WFGDB6;" .. textValue
   end
   local format = textValue:match("^(WFGDB%d+)")
-  if format ~= "WFGDB6" and format ~= "WFGDB7" then
+  if format ~= "WFGDB6" and format ~= "WFGDB7" and format ~= "WFGDB8" then
     if textValue:sub(1, 5) == "WFGDB" then
       return 0, string.format("Unsupported export format %s. Update Wforged and generate a new WFGDB7 export.", tostring(format or "unknown"))
     end
@@ -203,16 +218,22 @@ function Sync:Import(textValue)
   local firstType, firstId = nil, nil
   local importedRecords = {}
   local firstRecordDebug = nil
-  local groupedFormat = textValue:sub(1, 6) == "WFGDB7"
+  local groupedFormat = textValue:sub(1, 6) == "WFGDB7" or textValue:sub(1, 6) == "WFGDB8"
+  local namedGroupedFormat = textValue:sub(1, 6) == "WFGDB8"
   local headerLength = 8
   for record in textValue:sub(headerLength):gmatch("[^;]+") do
     if groupedFormat then
       local grouped = splitPayload(record)
-      local realm, mapId, x, y, itemList = grouped[1], grouped[2], grouped[3], grouped[4], grouped[5]
+      local realm, mapId, zoneName, x, y, itemList
+      if namedGroupedFormat then
+        realm, mapId, zoneName, x, y, itemList = grouped[1], grouped[2], grouped[3], grouped[4], grouped[5], grouped[6]
+      else
+        realm, mapId, x, y, itemList = grouped[1], grouped[2], grouped[3], grouped[4], grouped[5]
+      end
       for itemRecord in string.gmatch(itemList or "", "[^,]+") do
         local itemId, observedAt = itemRecord:match("^(%d+):(%d+)$")
         if itemId then
-          importedRecords[#importedRecords + 1] = { "WFG6", itemId, mapId, x, y, observedAt, realm }
+          importedRecords[#importedRecords + 1] = { "WFG6", itemId, mapId, x, y, observedAt, realm, zoneName }
           queued = queued + 1
         end
       end
@@ -245,7 +266,7 @@ function Sync:Import(textValue)
   end
   addon:LootDebug(string.format("Import scan: records=%d queued=%d firstType=%s firstId=%s", scanned, queued, tostring(firstType), tostring(firstId)))
   if scanned > 0 and queued == 0 then
-    return 0, string.format("Invalid %s data. Update Wforged and generate a fresh WFGDB7 export.", format)
+    return 0, string.format("Invalid %s data. Update Wforged and generate a fresh WFGDB8 export.", format)
   end
   return queued
 end
@@ -286,6 +307,9 @@ function Sync:ProcessImportQueue(elapsed)
     self.pendingImports = {}
     self.pendingImportIndex = 1
     addon:Print("Import complete: " .. tostring(total) .. " items processed.")
+    if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
+      addon.ItemScan:ResetZoneNameRepair()
+    end
     if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
       addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
     end
@@ -293,10 +317,6 @@ function Sync:ProcessImportQueue(elapsed)
 end
 
 function Sync:BroadcastItem(fingerprint)
-  if addon.DB:GetSettings().sendGuildUpdates == false then
-    addon:LootDebug("Guild broadcast skipped: sending is disabled.")
-    return false
-  end
   local entry = addon.DB.data.itemsByFingerprint[fingerprint]
   if not entry or not entry.isWorldforged then
     addon:LootDebug("Guild broadcast skipped: item record is unavailable.")
@@ -307,15 +327,30 @@ function Sync:BroadcastItem(fingerprint)
     addon:LootDebug("Guild broadcast skipped: item has no usable location.")
     return false
   end
-  if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-    C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
-  elseif SendAddonMessage then
-    SendAddonMessage(self.prefix, payload, "GUILD")
+  local settings = addon.DB:GetSettings()
+  if settings.sendGuildUpdates ~= false then
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+      C_ChatInfo.SendAddonMessage(self.prefix, payload, "GUILD")
+    elseif SendAddonMessage then
+      SendAddonMessage(self.prefix, payload, "GUILD")
+    else
+      addon:LootDebug("Guild broadcast skipped: addon-message API is unavailable.")
+    end
+    addon:LootDebug("Guild broadcast sent: " .. tostring(entry.itemName or entry.itemId))
   else
-    addon:LootDebug("Guild broadcast skipped: addon-message API is unavailable.")
-    return false
+    addon:LootDebug("Guild broadcast skipped: sending is disabled.")
   end
-  addon:LootDebug("Guild broadcast sent: " .. tostring(entry.itemName or entry.itemId))
+  local function send(channel, channelId)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+      C_ChatInfo.SendAddonMessage(self.prefix, payload, channel, channelId)
+    elseif SendAddonMessage then
+      SendAddonMessage(self.prefix, payload, channel, channelId)
+    end
+  end
+  if IsInGroup and IsInGroup() then
+    send("PARTY")
+    addon:LootDebug("Party broadcast sent: " .. tostring(entry.itemName or entry.itemId))
+  end
   return true
 end
 
@@ -337,7 +372,53 @@ function Sync:BroadcastTestItem()
   return true
 end
 
-function Sync:OnAddonMessage(prefix, message, channel, sender)
+function Sync:ShareDatabaseWithParty(targetName)
+  if not targetName or targetName == "" then
+    addon:Print("Select a party member as your target first.")
+    return false
+  end
+  if not IsInGroup or not IsInGroup() then
+    addon:Print("Party share requires a party or raid.")
+    return false
+  end
+  local requestId = tostring(time()) .. tostring(math.random(100, 999))
+  self.pendingShareRequests = self.pendingShareRequests or {}
+  self.pendingShareRequests[requestId] = { target = shortName(targetName), expiresAt = time() + 30 }
+  local senderName = UnitName and UnitName("player") or ""
+  local request = string.format("WFGSHARE_REQ|%s|%s|%s", requestId, senderName, targetName)
+  if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+    C_ChatInfo.SendAddonMessage(self.prefix, request, "PARTY")
+  elseif SendAddonMessage then
+    SendAddonMessage(self.prefix, request, "PARTY")
+  end
+  addon:Print("Party database share request sent to " .. targetName .. ".")
+  return true
+end
+
+function Sync:SendDatabaseToParty()
+  if not IsInGroup or not IsInGroup() then
+    return false
+  end
+  local export = self:Export()
+  local total = math.ceil(#export / self.shareChunkSize)
+  local shareId = tostring(time()) .. tostring(math.random(100, 999))
+  local target = self.activeShareTarget
+  if not target or total == 0 then return false end
+  local function sendChunk(index)
+    local chunk = export:sub((index - 1) * self.shareChunkSize + 1, index * self.shareChunkSize)
+    local payload = string.format("WFGSHARE1|%s|%s|%s|%d|%d|%s|%s", shareId, UnitName and UnitName("player") or "", target, index, total, shareChecksum(chunk), chunk)
+    if C_ChatInfo and C_ChatInfo.SendAddonMessage then C_ChatInfo.SendAddonMessage(self.prefix, payload, "PARTY")
+    elseif SendAddonMessage then SendAddonMessage(self.prefix, payload, "PARTY") end
+    if index < total and C_Timer and C_Timer.After then
+      C_Timer.After(self.shareChunkDelay, function() sendChunk(index + 1) end)
+    end
+  end
+  sendChunk(1)
+  addon:LootDebug(string.format("Party database share sent: chunks=%d bytes=%d", total, #export))
+  return true
+end
+
+function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
   if prefix ~= self.prefix or type(WforgedDB) ~= "table" then
     return
   end
@@ -348,12 +429,98 @@ function Sync:OnAddonMessage(prefix, message, channel, sender)
     addon:LootDebug("Guild message ignored: sender is this player.")
     return
   end
-  if addon.DB:GetSettings().receiveGuildUpdates == false and channel == "GUILD" then
+  local settings = addon.DB:GetSettings()
+  if settings.receiveGuildUpdates == false and channel == "GUILD" then
     addon:LootDebug("Guild message ignored: receiving is disabled.")
     return
   end
 
-  if message and message:sub(1, 7) == "WFGDB7|" then
+  if channel == "PARTY" and message and message:sub(1, 10) == "WFGSHARE1|" then
+    local shareId, senderName, targetName, index, total, checksum, chunk = message:match("^WFGSHARE1|([^|]+)|([^|]*)|([^|]+)|(%d+)|(%d+)|(%d+)|(.+)$")
+    local playerName = UnitName and UnitName("player") or ""
+    if targetName and shortName(targetName) ~= shortName(playerName) then return end
+    if shareId and index and total and chunk and shareChecksum(chunk) == checksum then
+      self.partyShares = self.partyShares or {}
+      local share = self.partyShares[shareId]
+      if share and share.expiresAt and time() > share.expiresAt then
+        self.partyShares[shareId] = nil
+        share = nil
+      end
+      share = share or { sender = shortName(senderName), target = shortName(targetName), total = tonumber(total), chunks = {}, count = 0, expiresAt = time() + 60 }
+      if share.sender ~= shortName(senderName) or share.target ~= shortName(targetName) or share.total ~= tonumber(total) then
+        addon:LootDebug("Party database share chunk ignored: transfer identity mismatch.")
+        return
+      end
+      if not share.chunks[tonumber(index)] then
+        share.chunks[tonumber(index)] = chunk
+        share.count = share.count + 1
+      end
+      self.partyShares[shareId] = share
+      addon:LootDebug(string.format("Party database share received: %d/%d", share.count, share.total))
+      if share.count >= share.total then
+        local parts = {}
+        for part = 1, share.total do parts[#parts + 1] = share.chunks[part] or "" end
+        local data = table.concat(parts)
+        if data:sub(1, 7) == "WFGDB8;" then self:Import(data) else addon:Print("Party database share rejected: invalid data.") end
+        self.partyShares[shareId] = nil
+        addon:Print("Party database import complete.")
+      end
+    end
+    return
+  end
+
+  if channel == "PARTY" and message and message:sub(1, 13) == "WFGSHARE_REQ|" then
+    local requestId, senderName, targetName = message:match("^WFGSHARE_REQ|([^|]+)|([^|]+)|(.+)$")
+    local playerName = UnitName and UnitName("player") or ""
+    if requestId and targetName and targetName == playerName then
+      addon:LootDebug(string.format("Party share request accepted for local player: sender=%s request=%s", tostring(sender), tostring(requestId)))
+      StaticPopupDialogs.WFORGED_SHARE_CONFIRM = {
+        text = string.format("%s wants to send you the Wforged database.%s", tostring(sender or "A party member"), localTest and "\n\n(TEST REQUEST)" or ""),
+        button1 = ACCEPT,
+        button2 = CANCEL,
+        OnAccept = function()
+          addon:LootDebug(string.format("Party share confirmation accepted: request=%s sender=%s", tostring(requestId), tostring(senderName)))
+          if localTest then
+            local export = addon.Sync:Export()
+            addon:LootDebug(string.format("Local party share test: database prepared for sending, chunks=%d bytes=%d", math.ceil(#export / addon.Sync.shareChunkSize), #export))
+            return
+          end
+          local response = string.format("WFGSHARE_ACK|%s|%s|%s", requestId, senderName, playerName)
+          if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+            C_ChatInfo.SendAddonMessage("WFORGED", response, "PARTY")
+          elseif SendAddonMessage then
+            SendAddonMessage("WFORGED", response, "PARTY")
+          end
+        end,
+        OnCancel = function()
+          addon:LootDebug(string.format("Party share confirmation declined: request=%s", tostring(requestId)))
+        end,
+        timeout = 0,
+        whileDead = true,
+        hideOnEscape = true,
+      }
+      StaticPopup_Show("WFORGED_SHARE_CONFIRM")
+      addon:LootDebug("Party share confirmation dialog shown.")
+    end
+    return
+  end
+
+  if channel == "PARTY" and message and message:sub(1, 13) == "WFGSHARE_ACK|" then
+    local requestId, targetName, approver = message:match("^WFGSHARE_ACK|([^|]+)|([^|]+)|(.+)$")
+    self.pendingShareRequests = self.pendingShareRequests or {}
+    local pending = self.pendingShareRequests[requestId]
+    if pending and time() <= (pending.expiresAt or 0)
+      and shortName(sender) == shortName(pending.target)
+      and shortName(approver) == shortName(pending.target) then
+      self.pendingShareRequests[requestId] = nil
+      self.activeShareTarget = pending.target
+      self:SendDatabaseToParty()
+      addon:Print("Party database share approved; sending data.")
+    end
+    return
+  end
+
+  if message and (message:sub(1, 7) == "WFGDB7|" or message:sub(1, 7) == "WFGDB8|") then
     self:Import(message)
     addon:LootDebug("Guild payload queued as WFGDB7.")
   elseif message and message:sub(1, 5) == "WFG6|" then
@@ -401,6 +568,9 @@ function Sync:MergeRemoteItem(payload)
     local stored = addon.DB:RecordItemObservation(payload)
     if addon.ItemScan and addon.ItemScan.RepairStoredItems then
       addon.ItemScan:RepairStoredItems(payload.itemId)
+    end
+    if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
+      addon.ItemScan:ResetZoneNameRepair()
     end
     addon:LootDebug(string.format("Import stored: id=%s name=%s map=%s x=%s y=%s quality=%s level=%s", tostring(payload.itemId), tostring(stored and stored.itemName or payload.itemName), tostring(stored and stored.lastMapId), tostring(stored and stored.lastX), tostring(stored and stored.lastY), tostring(stored and stored.quality), tostring(stored and stored.itemLevel)))
     return true

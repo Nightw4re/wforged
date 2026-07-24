@@ -33,6 +33,10 @@ local function matchesItemType(haystack, itemType)
     return haystack:find("food", 1, true) ~= nil
       or haystack:find("drink", 1, true) ~= nil
       or haystack:find("consumable", 1, true) ~= nil
+      or haystack:find("eating", 1, true) ~= nil
+      or haystack:find("drinking", 1, true) ~= nil
+      or haystack:find("well fed", 1, true) ~= nil
+      or haystack:find("restores", 1, true) ~= nil
   end
   if itemType == "equipment" then
     return haystack:find("requires level", 1, true) ~= nil
@@ -395,6 +399,8 @@ function DB:RecordItemObservation(payload)
   entry.effectiveLevel = payload.effectiveLevel or payload.itemLevel
   entry.upgradeLevel = payload.upgradeLevel
   entry.isUpgrade = entry.isUpgrade or (payload.isUpgrade and true or false)
+  entry.upgradeCost = payload.upgradeCost or entry.upgradeCost
+  entry.upgradeCurrency = payload.upgradeCurrency or entry.upgradeCurrency
   entry.statsText = payload.statsText
   entry.tooltipText = payload.tooltipText
   entry.lastSeenAt = payload.observedAt or time()
@@ -544,6 +550,12 @@ function DB:GetUpgradeInfo(itemKey)
   end
 
   local bucket = self.data.upgradeCostsByItem[itemKey]
+  if not bucket then
+    local _, entry = self:GetItemEntry(itemKey)
+    if entry and entry.upgradeCost then
+      return { cost = entry.upgradeCost, currency = entry.upgradeCurrency }
+    end
+  end
   if not bucket then
     return nil
   end
@@ -866,14 +878,18 @@ function DB:SearchItems(query, filters)
       local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
         entry.lastMapId, entry.lastContinent, entry.lastZone, entry.lastZoneName
       ) or entry.lastZoneName
+      local upgradeInfo = self:GetUpgradeInfo(itemKey)
       local haystack = string.lower(table.concat({
         bucket.itemName or "",
+        tostring(entry.itemId or bucket.itemId or ""),
         zoneName or "",
+        entry.zoneRepairPending and "unknown zone" or "",
         entry.statsText or "",
         entry.tooltipText or "",
         tostring(entry.itemLevel or ""),
         tostring(entry.effectiveLevel or ""),
         tostring(entry.upgradeLevel or ""),
+        tostring(upgradeInfo and upgradeInfo.cost or ""),
       }, " "))
 
       local matches = true
@@ -974,6 +990,7 @@ function DB:SearchItems(query, filters)
             lastContinent = (location and location.continent) or (not isLocationlessSource(entry.lastSource) and entry.lastContinent or nil),
             lastZone = (location and location.zone) or (not isLocationlessSource(entry.lastSource) and entry.lastZone or nil),
             lastZoneName = (location and location.zoneName) or (not isLocationlessSource(entry.lastSource) and entry.lastZoneName or nil),
+            zoneRepairPending = entry.zoneRepairPending == true,
             lastX = (location and location.x) or (not isLocationlessSource(entry.lastSource) and entry.lastX or nil),
             lastY = (location and location.y) or (not isLocationlessSource(entry.lastSource) and entry.lastY or nil),
           }

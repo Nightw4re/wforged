@@ -42,13 +42,28 @@ local function filterLabel(value, kind)
   return value
 end
 
+local function updateFilterVisual(button)
+  if not button then return end
+  local active = button.value and button.value ~= ""
+  local fontString = button.GetFontString and button:GetFontString() or nil
+  if fontString and fontString.SetTextColor then
+    fontString:SetTextColor(1, active and 0.82 or 1, active and 0 or 1, 1)
+  end
+  if button.SetBackdrop and button.SetBackdropColor and button.SetBackdropBorderColor then
+    button:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1})
+    button:SetBackdropColor(0.15, 0.12, 0.02, active and 0.85 or 0.35)
+    button:SetBackdropBorderColor(active and 1 or 0.25, active and 0.65 or 0.25, 0.05, 1)
+  end
+end
+
 local function createFilter(parent, kind, x, y)
   local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   button:SetSize(108, 22)
   button:SetPoint("TOPLEFT", x, y)
   button.kind = kind
-  button.value = ""
-  button:SetText(filterLabel("", kind))
+      button.value = ""
+      button:SetText(filterLabel("", kind))
+      updateFilterVisual(button)
   button.arrow = button:CreateTexture(nil, "OVERLAY")
   button.arrow:SetTexture("Interface\\ChatFrame\\ChatFrameExpandArrow")
   button.arrow:SetSize(12, 12)
@@ -73,6 +88,7 @@ local function createFilter(parent, kind, x, y)
         info.func = function()
           self.value = value
           self:SetText(filterLabel(value, kind))
+          updateFilterVisual(self)
           if SearchUI.filters then SearchUI.filters[kind] = value end
           SearchUI.page = 1
           SearchUI:Refresh()
@@ -219,12 +235,12 @@ local function buildShareText(result)
     return ""
   end
 
-  local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
+  local zoneName = result.zoneRepairPending and nil or (addon.ResolveZoneName and addon:ResolveZoneName(
     result.lastMapId,
     result.lastContinent,
     result.lastZone,
     result.lastZoneName
-  ) or result.lastZoneName
+  ) or result.lastZoneName)
 
   local locationParts = {}
   if zoneName and zoneName ~= "" then
@@ -258,6 +274,10 @@ local function hasUsableLocation(result)
     return false
   end
 
+  if result.zoneRepairPending or not result.lastZoneName or result.lastZoneName == "" then
+    return false
+  end
+
   if result.lastSource == "inventory" or result.lastSource == "equipped" then
     return false
   end
@@ -265,29 +285,23 @@ local function hasUsableLocation(result)
   if type(result.lastX) ~= "number" or type(result.lastY) ~= "number" then
     return false
   end
+  if not tonumber(result.lastMapId) then
+    return false
+  end
 
   if result.lastX <= 0 or result.lastX >= 1 or result.lastY <= 0 or result.lastY >= 1 then
     return false
   end
 
-  local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
-    result.lastMapId,
-    result.lastContinent,
-    result.lastZone,
-    result.lastZoneName
-  ) or result.lastZoneName
-
-  if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
-    return false
-  end
   return true
 end
 
 local function getLocationText(result)
   if not hasUsableLocation(result) then return "-" end
-  local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
+  if result.zoneRepairPending then return "unknown zone" end
+  local zoneName = result.zoneRepairPending and nil or (addon.ResolveZoneName and addon:ResolveZoneName(
     result.lastMapId, result.lastContinent, result.lastZone, result.lastZoneName
-  ) or result.lastZoneName
+  ) or result.lastZoneName)
   if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
     return "-"
   end
@@ -737,7 +751,13 @@ function SearchUI:Refresh(query)
           row.currencyButton:Hide()
         end
       else
-        row.locationText:SetText(getLocationText(result))
+        local locationText = getLocationText(result)
+        row.locationText:SetText(locationText)
+        if result.zoneRepairPending and locationText == "unknown zone" then
+          row.locationText:SetTextColor(0.55, 0.55, 0.55)
+        else
+          row.locationText:SetTextColor(1, 0.82, 0)
+        end
         row.locationText:SetJustifyH("LEFT")
         row.locationText:SetWidth(263)
         row.findButton:ClearAllPoints()
@@ -824,6 +844,7 @@ function SearchUI:ResetFilters()
     self.filters[kind] = ""
     button.value = ""
     button:SetText(filterLabel("", kind))
+    updateFilterVisual(button)
   end
   self.frame.editBox:SetText("")
   self.suppressRefresh = nil
@@ -920,6 +941,7 @@ function SearchUI:Toggle()
       self.filters[kind] = state.filters and state.filters[kind] or ""
       frame.filters[kind].value = self.filters[kind]
       frame.filters[kind]:SetText(filterLabel(self.filters[kind], kind))
+      updateFilterVisual(frame.filters[kind])
       local originalClick = frame.filters[kind]:GetScript("OnClick")
       frame.filters[kind]:SetScript("OnClick", function(button)
         self.filters[kind] = button.value or ""
@@ -970,6 +992,23 @@ function SearchUI:Toggle()
     frame.receiveGuildCheckbox:SetPoint("LEFT", frame.sendGuildCheckbox, "RIGHT", 180, 0)
     frame.receiveGuildCheckbox:SetScript("OnClick", function(button)
       addon.DB:GetSettings().receiveGuildUpdates = button:GetChecked() and true or false
+    end)
+
+    frame.sharePartyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    frame.sharePartyButton:SetSize(180, 22)
+    frame.sharePartyButton:SetPoint("TOPLEFT", frame.receiveGuildCheckbox, "BOTTOMLEFT", 0, -8)
+    frame.sharePartyButton:SetText("Share database with party")
+    frame.sharePartyButton:SetScript("OnClick", function()
+      local targetName = UnitName and UnitName("target") or nil
+      if not targetName or not UnitIsPlayer or not UnitIsPlayer("target") then
+        addon:Print("Target a party member before sharing the database.")
+        return
+      end
+      if UnitInParty and not UnitInParty("target") and UnitInRaid and not UnitInRaid("target") then
+        addon:Print("The target must be in your party or raid.")
+        return
+      end
+      if addon.Sync and addon.Sync.ShareDatabaseWithParty then addon.Sync:ShareDatabaseWithParty(targetName) end
     end)
 
     frame.resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
@@ -1057,7 +1096,7 @@ function SearchUI:Toggle()
     settings.devToggle:SetPoint("TOPRIGHT", -32, -5)
     settings.devToggle:SetText("Dev")
 
-    for _, control in ipairs({ frame.logsCheckbox, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.dataBox, frame.exportButton, frame.importButton }) do
+    for _, control in ipairs({ frame.logsCheckbox, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.sharePartyButton, frame.dataBox, frame.exportButton, frame.importButton }) do
       control:SetParent(settings)
     end
     settings.dataBackground = CreateFrame("Frame", nil, settings)
@@ -1125,6 +1164,16 @@ function SearchUI:Toggle()
     frame.testBroadcastButton:SetScript("OnClick", function()
       if addon.Sync and addon.Sync.BroadcastTestItem then addon.Sync:BroadcastTestItem() end
     end)
+    frame.testPartyButton = CreateFrame("Button", nil, settings, "UIPanelButtonTemplate")
+    frame.testPartyButton:SetSize(180, 22)
+    frame.testPartyButton:SetText("Test party share request")
+    frame.testPartyButton:SetScript("OnClick", function()
+      local playerName = UnitName and UnitName("player") or "TestPlayer"
+      if addon.Sync and addon.Sync.OnAddonMessage then
+        addon.Sync:OnAddonMessage("WFORGED", "WFGSHARE_REQ|local-test|TestSender|" .. playerName, "PARTY", "TestSender", true)
+      end
+      addon:Print("Local party-share request test triggered. No data was sent or changed.")
+    end)
     settings.playerSection = settings:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     settings.playerSection:SetPoint("TOPLEFT", 18, -30)
     settings.playerSection:SetText("Player features")
@@ -1156,8 +1205,8 @@ function SearchUI:Toggle()
     end)
     frame.exportButton:SetPoint("TOPLEFT", 426, -130)
     frame.importButton:SetPoint("TOPLEFT", 426, -158)
-    local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton }
-    local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
+    local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton, frame.testPartyButton }
+    local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.sharePartyButton, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
     local function setDebugVisible(visible)
       settings.debugVisible = visible and true or false
       for _, control in ipairs(debugControls) do
@@ -1173,6 +1222,7 @@ function SearchUI:Toggle()
         frame.importTestButton:SetPoint("TOPLEFT", 18, -100)
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -100)
         frame.testBroadcastButton:SetPoint("TOPLEFT", 18, -128)
+        frame.testPartyButton:SetPoint("TOPLEFT", 300, -128)
       else
         settings.debugSection:SetPoint("TOPLEFT", 18, -268)
         frame.logsCheckbox:SetPoint("TOPLEFT", 18, -300)
@@ -1181,9 +1231,9 @@ function SearchUI:Toggle()
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -328)
         frame.allMapItemsCheckbox:SetPoint("TOPLEFT", 18, -48)
         frame.receiveGuildCheckbox:SetPoint("TOPLEFT", 18, -88)
-        settings.dataBackground:SetPoint("TOPLEFT", 18, -130)
-        frame.exportButton:SetPoint("TOPLEFT", 426, -130)
-        frame.importButton:SetPoint("TOPLEFT", 426, -158)
+        settings.dataBackground:SetPoint("TOPLEFT", 18, -152)
+        frame.exportButton:SetPoint("TOPLEFT", 426, -152)
+        frame.importButton:SetPoint("TOPLEFT", 426, -180)
       end
       settings.devToggle:SetText(visible and "Player" or "Dev")
     end
@@ -1259,6 +1309,15 @@ function SearchUI:Toggle()
   if self.frame:IsShown() then
     self.frame:Hide()
   else
+    -- ElvUI can keep the map background behind addon panels while its controls
+    -- remain visible. Close the map before showing the search window.
+    if WorldMapFrame and WorldMapFrame:IsShown() then
+      if HideUIPanel then
+        HideUIPanel(WorldMapFrame)
+      else
+        WorldMapFrame:Hide()
+      end
+    end
     self:RefreshSettings()
     self.frame:Show()
     self.frame.editBox:SetText(self.frame.editBox:GetText() or "")
@@ -1270,6 +1329,11 @@ end
 function SearchUI:ToggleSettings()
   if not self.frame then
     self:Toggle()
+    -- Toggle() creates the shared frame and opens the list on first use.
+    -- Settings opened from the minimap should show only the settings panel.
+    if self.frame then
+      self.frame:Hide()
+    end
   end
   if self.frame and self.frame.settings then
     self.frame.settings:Show()
@@ -1320,6 +1384,8 @@ function SearchUI:ApplyElvUISkin(frame)
     S:HandleCheckBox(frame.allMapItemsCheckbox)
     S:HandleCheckBox(frame.sendGuildCheckbox)
     S:HandleCheckBox(frame.receiveGuildCheckbox)
+    if S.HandleButton then S:HandleButton(frame.sharePartyButton) end
+    if S.HandleButton then S:HandleButton(frame.testPartyButton) end
   end
   if frame.settings and frame.settings.dataBackground then
     frame.settings.dataBackground:SetSize(400, 100)
