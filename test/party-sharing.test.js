@@ -45,3 +45,17 @@ test('loot scanning does not queue ordinary non-Worldforged items', () => {
   assert.match(core, /if isWorldforged then/);
   assert.match(core, /frame\.pendingElapsed >= 1/);
 });
+
+test('upgrade pending records preserve cost after the vendor closes', () => {
+  const scan = fs.readFileSync(path.join(__dirname, '..', 'addon', 'Wforged', 'ItemScan.lua'), 'utf8');
+  const db = fs.readFileSync(path.join(__dirname, '..', 'addon', 'Wforged', 'DB.lua'), 'utf8');
+  assert.match(scan, /upgradeCost = context and context\.upgradeCost/);
+  assert.match(scan, /upgradeCurrency = context and context\.upgradeCurrency/);
+  assert.match(db, /entry\.upgradeCost = payload\.upgradeCost or entry\.upgradeCost/);
+});
+
+test('vendor scan repairs existing variants from visible offers', () => {
+  const vendor = fs.readFileSync(path.join(__dirname, '..', 'addon', 'Wforged', 'VendorScan.lua'), 'utf8');
+  assert.match(vendor, /Upgrade cost repaired from vendor offer/);
+  assert.match(vendor, /tonumber\(existing\.itemId\) == tonumber\(candidate\.itemId\)/);
+});

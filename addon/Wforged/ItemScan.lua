@@ -635,6 +635,10 @@ function ItemScan:QueuePendingItem(itemLink, sourceType, context)
     zoneName = storedZoneName,
     upgradeLevel = context and context.upgradeLevel or nil,
     isUpgrade = context and context.isUpgrade or nil,
+    upgradeCost = context and context.upgradeCost or nil,
+    upgradeCurrency = context and context.upgradeCurrency or nil,
+    sourceItemId = context and context.sourceItemId or nil,
+    sourceItemName = context and context.sourceItemName or nil,
     isWorldforged = context and context.isWorldforged or nil,
     upgradeCandidate = context and context.upgradeCandidate or nil,
   }

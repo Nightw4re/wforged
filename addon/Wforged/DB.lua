@@ -399,6 +399,8 @@ function DB:RecordItemObservation(payload)
   entry.effectiveLevel = payload.effectiveLevel or payload.itemLevel
   entry.upgradeLevel = payload.upgradeLevel
   entry.isUpgrade = entry.isUpgrade or (payload.isUpgrade and true or false)
+  entry.upgradeCost = payload.upgradeCost or entry.upgradeCost
+  entry.upgradeCurrency = payload.upgradeCurrency or entry.upgradeCurrency
   entry.statsText = payload.statsText
   entry.tooltipText = payload.tooltipText
   entry.lastSeenAt = payload.observedAt or time()
@@ -548,6 +550,12 @@ function DB:GetUpgradeInfo(itemKey)
   end
 
   local bucket = self.data.upgradeCostsByItem[itemKey]
+  if not bucket then
+    local _, entry = self:GetItemEntry(itemKey)
+    if entry and entry.upgradeCost then
+      return { cost = entry.upgradeCost, currency = entry.upgradeCurrency }
+    end
+  end
   if not bucket then
     return nil
   end

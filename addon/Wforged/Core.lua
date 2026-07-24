@@ -727,7 +727,16 @@ function addon.MinimapButton:Create()
 
 
   button:SetScript("OnClick", function(_, mouseButton)
-    if mouseButton == "RightButton" and addon.SearchUI and addon.SearchUI.ToggleSettings then
+    if mouseButton == "LeftButton" and IsShiftKeyDown and IsShiftKeyDown() then
+      WforgedDB.showAllMapItems = not WforgedDB.showAllMapItems
+      if addon.MapNotes and addon.MapNotes.allMapCheckbox then
+        addon.MapNotes.allMapCheckbox:SetChecked(WforgedDB.showAllMapItems and true or false)
+      end
+      if addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
+        addon.MapNotes:RefreshAllMarkers()
+      end
+      addon:Print("Show all map items: " .. (WforgedDB.showAllMapItems and "enabled" or "disabled"))
+    elseif mouseButton == "RightButton" and addon.SearchUI and addon.SearchUI.ToggleSettings then
       addon.SearchUI:ToggleSettings()
     elseif addon.SearchUI and addon.SearchUI.Toggle then
       addon.SearchUI:Toggle()
@@ -738,6 +747,7 @@ function addon.MinimapButton:Create()
     GameTooltip:SetOwner(selfButton, "ANCHOR_LEFT")
     GameTooltip:SetText("Wforged")
     GameTooltip:AddLine("Left click: search items", 1, 1, 1)
+    GameTooltip:AddLine("Shift + left click: show all map items", 1, 1, 1)
     GameTooltip:AddLine("Right click: settings", 1, 1, 1)
     GameTooltip:AddLine("Drag: move around minimap", 0.8, 0.8, 0.8)
     GameTooltip:Show()
