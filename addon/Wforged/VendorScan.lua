@@ -3,7 +3,7 @@ local addonName, addon = ...
 local VendorScan = {}
 addon.VendorScan = VendorScan
 
-VendorScan.frameScanInterval = 0.5
+VendorScan.frameScanInterval = 1.0
 
 local function collectChildFrames(root, output, depth, maxDepth)
   if not root or depth > maxDepth or not root.GetChildren then

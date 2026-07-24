@@ -39,3 +39,9 @@ test('a local party-share request test command is available', () => {
   assert.match(core, /test-party-request/);
   assert.match(core, /No data was sent or changed/);
 });
+
+test('loot scanning does not queue ordinary non-Worldforged items', () => {
+  const core = fs.readFileSync(path.join(__dirname, '..', 'addon', 'Wforged', 'Wforged.lua'), 'utf8');
+  assert.match(core, /if isWorldforged then/);
+  assert.match(core, /frame\.pendingElapsed >= 1/);
+});

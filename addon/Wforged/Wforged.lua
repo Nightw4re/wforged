@@ -389,6 +389,7 @@ registerEvent("PLAYER_LOGIN", function(self)
   end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
     frame.elapsed = (frame.elapsed or 0) + elapsed
+    frame.pendingElapsed = (frame.pendingElapsed or 0) + elapsed
     frame.vendorElapsed = (frame.vendorElapsed or 0) + elapsed
     if frame.elapsed >= 0.2 then
       frame.elapsed = 0
@@ -398,7 +399,8 @@ registerEvent("PLAYER_LOGIN", function(self)
       if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
         local repaired = self.ItemScan:RepairStoredItems(nil, 1)
       end
-      if self.ItemScan and self.ItemScan.RetryPendingItems then
+      if frame.pendingElapsed >= 1 and self.ItemScan and self.ItemScan.RetryPendingItems then
+        frame.pendingElapsed = 0
         self.ItemScan:RetryPendingItems(nil, 1)
       end
       if self.SearchUI and self.SearchUI.UpdateRepairIndicator then
@@ -458,7 +460,7 @@ registerEvent("LOOT_OPENED", function(self)
       if itemLink then
         self:LootDebug("LOOT_OPENED slot item: " .. tostring(itemLink))
         local isWorldforged = self.ItemScan:IsWorldforgedItem(itemLink, true)
-        if isWorldforged or itemLink then
+        if isWorldforged then
           hasWorldforged = hasWorldforged or isWorldforged
           self.ItemScan:QueuePendingItem(itemLink, "loot-opened", {
             isWorldforged = isWorldforged,
