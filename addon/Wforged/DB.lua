@@ -403,7 +403,9 @@ function DB:RecordItemObservation(payload)
   entry.upgradeCurrency = payload.upgradeCurrency or entry.upgradeCurrency
   entry.statsText = payload.statsText
   entry.tooltipText = payload.tooltipText
-  entry.lastSeenAt = payload.observedAt or time()
+  local observedAt = payload.observedAt or time()
+  local previousSeenAt = tonumber(entry.lastSeenAt or 0) or 0
+  entry.lastSeenAt = observedAt
   entry.lastSource = payload.sourceType
   local hasLocation = payload.mapId and payload.x and payload.y
   if hasLocation or not isLocationlessSource(payload.sourceType) then
@@ -413,6 +415,24 @@ function DB:RecordItemObservation(payload)
     entry.lastZoneName = payload.zoneName
     entry.lastX = normalizeNumber(payload.x)
     entry.lastY = normalizeNumber(payload.y)
+  end
+
+  -- A newer shared observation replaces the previous spawn location. Keeping
+  -- both points makes the map show stale and current zones for one item.
+  if hasLocation and tonumber(observedAt) >= previousSeenAt then
+    local points = self.data.spawnPointsByItem and self.data.spawnPointsByItem[fingerprint]
+    if points then
+      local currentMapId = tonumber(payload.mapId)
+      local currentX = normalizeNumber(payload.x)
+      local currentY = normalizeNumber(payload.y)
+      for pointKey, point in pairs(points) do
+        if tonumber(point.mapId) ~= currentMapId
+          or math.abs((tonumber(point.x) or -1) - currentX) > 0.0001
+          or math.abs((tonumber(point.y) or -1) - currentY) > 0.0001 then
+          points[pointKey] = nil
+        end
+      end
+    end
   end
   entry.observationCount = (entry.observationCount or 0) + 1
   entry.sources[payload.sourceType or "unknown"] = true

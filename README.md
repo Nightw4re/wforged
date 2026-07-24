@@ -4,7 +4,7 @@
 
 Wforged collects Worldforged item locations and item information in World of Warcraft. It works locally, supports ElvUI when installed, and can share compact item observations with guild members who also use the addon.
 
-The release currently includes a bundled snapshot of **121 unique located base items**. Upgrade variants and locationless records are intentionally excluded.
+The release currently includes a bundled snapshot of **257 unique items including located base items and upgrades**.
 
 ## Features
 
