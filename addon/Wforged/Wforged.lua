@@ -72,6 +72,15 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "test-party-request" then
+    local playerName = UnitName and UnitName("player") or "TestPlayer"
+    if addon.Sync and addon.Sync.OnAddonMessage then
+      addon.Sync:OnAddonMessage("WFORGED", "WFGSHARE_REQ|local-test|TestSender|" .. playerName, "PARTY", "TestSender", true)
+      addon:Print("Local party-share request test triggered. No data was sent or changed.")
+    end
+    return
+  end
+
   if command == "repair-zones" then
     if addon.ItemScan then
       addon.ItemScan.zoneRepairInteractive = not addon.ItemScan.zoneRepairInteractive
