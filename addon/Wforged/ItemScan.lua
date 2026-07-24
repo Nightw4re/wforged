@@ -540,8 +540,28 @@ function ItemScan:ResetZoneNameRepair()
 end
 
 function ItemScan:RepairZoneNamesFromOpenMap()
-  if not self.zoneRepairInteractive or not GetCurrentMapAreaID or not GetMapInfo then return 0 end
+  -- The open map is the safest source for resolving stored custom zone names.
+  -- Run this quietly for every map open; only matching Worldforged points with
+  -- coordinates are touched, and map IDs/positions are never rewritten here.
+  if not GetCurrentMapAreaID or not GetMapInfo then return 0 end
   local currentId = tonumber(GetCurrentMapAreaID())
+  local currentMapIds = {}
+  local function addMapId(value)
+    value = tonumber(value)
+    if value and value > 0 then
+      currentMapIds[value] = true
+    end
+  end
+  local function readMapId(functionName)
+    local fn = _G[functionName]
+    if not fn then return end
+    local ok, value = pcall(fn)
+    if ok then addMapId(value) end
+  end
+  addMapId(currentId)
+  readMapId("GetMapID")
+  readMapId("GetWorldMapAreaID")
+  readMapId("GetActiveMapID")
   local name
   if GetCurrentMapContinent and GetCurrentMapZone and GetMapZones then
     local continent = GetCurrentMapContinent()
@@ -552,31 +572,63 @@ function ItemScan:RepairZoneNamesFromOpenMap()
   end
   name = name or (GetRealZoneText and GetRealZoneText()) or (GetZoneText and GetZoneText())
   if not currentId or not name or name == "" or name:match("^Map %d+$") then return 0 end
+  local mapPreviewKey = tostring(currentId) .. ":" .. tostring(name)
+  if self.openMapRepairPreviewMap ~= mapPreviewKey then
+    self.openMapRepairPreviewMap = mapPreviewKey
+    self.openMapRepairPreviewLog = {}
+  end
+  self.openMapRepairPreviewLog = self.openMapRepairPreviewLog or {}
   local repaired = 0
+  local previewed = 0
+  local dryRun = false
   for _, entry in pairs(addon.DB.data.itemsByFingerprint or {}) do
     local mapId = tonumber(entry.lastMapId)
-    local mapMatches = mapId and (mapId == currentId or mapId + 1 == currentId or mapId - 1 == currentId)
+    local mapMatches = false
+    if mapId then
+      for openMapId in pairs(currentMapIds) do
+        if mapId == openMapId or mapId + 1 == openMapId or mapId - 1 == openMapId then
+          mapMatches = true
+          break
+        end
+      end
+    end
     if entry.isWorldforged and mapMatches
       and tonumber(entry.lastX) and tonumber(entry.lastY)
       and entry.lastZoneName ~= name then
       local oldName = entry.lastZoneName
-      entry.lastZoneName = name
-      entry.zoneRepairPending = nil
-      repaired = repaired + 1
-      addon:LootDebug(string.format("Interactive zone repair: mapId=%s %s -> %s", tostring(mapId), tostring(oldName or "nil"), tostring(name)))
+      previewed = previewed + 1
+      local previewKey = tostring(entry.itemId or entry.fingerprint or "?") .. ":" .. tostring(oldName or "nil")
+      if not self.openMapRepairPreviewLog[previewKey] then
+        self.openMapRepairPreviewLog[previewKey] = true
+        addon:LootDebug(string.format("Zone repair: mapId=%s %s -> %s", tostring(mapId), tostring(oldName or "nil"), tostring(name)))
+      end
+      if not dryRun then
+        entry.lastZoneName = name
+        entry.zoneRepairPending = nil
+        repaired = repaired + 1
 
-      -- Search prefers spawn-point records over the item entry. Keep both
-      -- representations in sync or the table can still show an empty zone.
-      local points = addon.DB.data.spawnPointsByItem and addon.DB.data.spawnPointsByItem[entry.fingerprint]
-      for _, point in pairs(points or {}) do
-        local pointMap = tonumber(point.mapId)
-        local pointX = tonumber(point.x)
-        local pointY = tonumber(point.y)
-        if pointMap and pointX and pointY
-          and (pointMap == currentId or pointMap + 1 == currentId)
-          and math.abs(pointX - tonumber(entry.lastX)) < 0.0001
-          and math.abs(pointY - tonumber(entry.lastY)) < 0.0001 then
-          point.zoneName = name
+        -- Search prefers spawn-point records over the item entry. Keep both
+        -- representations in sync or the table can still show an empty zone.
+        local points = addon.DB.data.spawnPointsByItem and addon.DB.data.spawnPointsByItem[entry.fingerprint]
+        for _, point in pairs(points or {}) do
+          local pointMap = tonumber(point.mapId)
+          local pointX = tonumber(point.x)
+          local pointY = tonumber(point.y)
+          local pointMapMatches = false
+          if pointMap then
+            for openMapId in pairs(currentMapIds) do
+              if pointMap == openMapId or pointMap + 1 == openMapId or pointMap - 1 == openMapId then
+                pointMapMatches = true
+                break
+              end
+            end
+          end
+          if pointMap and pointX and pointY
+            and pointMapMatches
+            and math.abs(pointX - tonumber(entry.lastX)) < 0.0001
+            and math.abs(pointY - tonumber(entry.lastY)) < 0.0001 then
+            point.zoneName = name
+          end
         end
       end
     end
@@ -587,7 +639,7 @@ function ItemScan:RepairZoneNamesFromOpenMap()
   if repaired > 0 and addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
     addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
   end
-  return repaired
+  return dryRun and previewed or repaired
 end
 
 function ItemScan:QueuePendingItem(itemLink, sourceType, context)

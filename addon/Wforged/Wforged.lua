@@ -84,7 +84,12 @@ local function handleSlashCommand(message)
   if command == "repair-zones" then
     if addon.ItemScan then
       addon.ItemScan.zoneRepairInteractive = not addon.ItemScan.zoneRepairInteractive
-      addon:Print("Zone map repair mode: " .. (addon.ItemScan.zoneRepairInteractive and "enabled; open incorrect maps" or "disabled"))
+      if addon.ItemScan.zoneRepairInteractive and addon.ItemScan.RepairZoneNamesFromOpenMap then
+        local repaired = addon.ItemScan:RepairZoneNamesFromOpenMap()
+        addon:Print(string.format("Zone repair: %d item(s) repaired on the open map.", repaired or 0))
+      else
+        addon:Print("Zone map repair mode: disabled")
+      end
     else
       addon:PrintError("Zone map repair is not available.")
     end
