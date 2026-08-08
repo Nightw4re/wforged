@@ -978,7 +978,11 @@ function DB:SearchItems(query, filters)
           if sourceLocation and sourceLocation.mapId then
             location = sourceLocation
           end
-          if isLocationlessSource(entry.lastSource) then
+          local spawnPoints = self.data.spawnPointsByItem and self.data.spawnPointsByItem[fingerprint]
+          local hasSpawnPoint = spawnPoints and next(spawnPoints) ~= nil
+          if isLocationlessSource(entry.lastSource) and not hasSpawnPoint
+            and not (sourceLocation and sourceLocation.mapId) then
+            -- Do not expose a vendor/inventory position as the item's spawn.
             location = nil
           end
           results[#results + 1] = {
