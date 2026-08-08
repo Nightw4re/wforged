@@ -441,6 +441,9 @@ function VendorScan:ScanUpgradeFrameContents()
   if captured > 0 then
     addon:LootDebug("Upgrade frame scan captured items: " .. tostring(captured))
     if addon.DB and addon.DB.Save then addon.DB:Save() end
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
   end
 
   return captured
