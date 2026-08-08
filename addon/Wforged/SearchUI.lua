@@ -687,13 +687,18 @@ function SearchUI:Refresh(query)
   local pageCount = math.max(1, math.ceil(#results / self.pageSize))
   self.page = math.min(math.max(self.page or 1, 1), pageCount)
   local first = ((self.page - 1) * self.pageSize) + 1
+  local last = math.min(first + self.pageSize - 1, #results)
   local pageResults = {}
-  for index = first, math.min(first + self.pageSize - 1, #results) do
+  for index = first, last do
     pageResults[#pageResults + 1] = results[index]
   end
   self.results = pageResults
   if self.frame and self.frame.pageLabel then
-    self.frame.pageLabel:SetText(string.format("Page %d / %d", self.page, pageCount))
+    if #results > 0 then
+      self.frame.pageLabel:SetText(string.format("Items %d-%d / %d", first, last, #results))
+    else
+      self.frame.pageLabel:SetText("Items 0 / 0")
+    end
     self.frame.previousPage:SetEnabled(self.page > 1)
     self.frame.nextPage:SetEnabled(self.page < pageCount)
   end
@@ -832,6 +837,8 @@ function SearchUI:RefreshSettings()
     self.frame.allMapItemsCheckbox:SetChecked(WforgedDB.showAllMapItems and true or false)
   end
   if self.frame.sendGuildCheckbox then self.frame.sendGuildCheckbox:SetChecked(settings.sendGuildUpdates ~= false) end
+  if self.frame.sendCollectorCheckbox then self.frame.sendCollectorCheckbox:SetChecked(settings.sendCollectorUpdates == true) end
+  if self.frame.receiveCollectorCheckbox then self.frame.receiveCollectorCheckbox:SetChecked(settings.receiveCollectorUpdates == true) end
   if self.frame.receiveGuildCheckbox then self.frame.receiveGuildCheckbox:SetChecked(settings.receiveGuildUpdates ~= false) end
 end
 
@@ -993,10 +1000,22 @@ function SearchUI:Toggle()
     frame.receiveGuildCheckbox:SetScript("OnClick", function(button)
       addon.DB:GetSettings().receiveGuildUpdates = button:GetChecked() and true or false
     end)
+    frame.sendCollectorCheckbox = createCheckbox(frame, "Send friend updates")
+    frame.sendCollectorCheckbox:SetPoint("TOPLEFT", frame.sendGuildCheckbox, "BOTTOMLEFT", 0, -8)
+    frame.sendCollectorCheckbox:SetScript("OnClick", function(button)
+      addon.DB:GetSettings().sendCollectorUpdates = button:GetChecked() and true or false
+    end)
+    frame.receiveCollectorCheckbox = createCheckbox(frame, "Receive friend updates")
+    frame.receiveCollectorCheckbox:SetPoint("TOPLEFT", frame.receiveGuildCheckbox, "BOTTOMLEFT", 0, -8)
+    frame.receiveCollectorCheckbox:SetScript("OnClick", function(button)
+      local enabled = button:GetChecked() and true or false
+      addon.DB:GetSettings().receiveCollectorUpdates = enabled
+      if addon.Sync then addon.Sync.collectorEnabled = enabled end
+    end)
 
     frame.sharePartyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     frame.sharePartyButton:SetSize(180, 22)
-    frame.sharePartyButton:SetPoint("TOPLEFT", frame.receiveGuildCheckbox, "BOTTOMLEFT", 0, -8)
+    frame.sharePartyButton:SetPoint("TOPLEFT", frame.receiveCollectorCheckbox, "BOTTOMLEFT", 20, -12)
     frame.sharePartyButton:SetText("Share database with party")
     frame.sharePartyButton:SetScript("OnClick", function()
       local targetName = UnitName and UnitName("target") or nil
@@ -1096,7 +1115,7 @@ function SearchUI:Toggle()
     settings.devToggle:SetPoint("TOPRIGHT", -32, -5)
     settings.devToggle:SetText("Dev")
 
-    for _, control in ipairs({ frame.logsCheckbox, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.sharePartyButton, frame.dataBox, frame.exportButton, frame.importButton }) do
+    for _, control in ipairs({ frame.logsCheckbox, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.sendCollectorCheckbox, frame.receiveGuildCheckbox, frame.receiveCollectorCheckbox, frame.sharePartyButton, frame.dataBox, frame.exportButton, frame.importButton }) do
       control:SetParent(settings)
     end
     settings.dataBackground = CreateFrame("Frame", nil, settings)
@@ -1123,6 +1142,8 @@ function SearchUI:Toggle()
     frame.allMapItemsCheckbox:SetPoint("TOPLEFT", 18, -48)
     frame.sendGuildCheckbox:SetPoint("TOPLEFT", 300, -88)
     frame.receiveGuildCheckbox:SetPoint("TOPLEFT", 18, -88)
+    frame.sendCollectorCheckbox:SetPoint("TOPLEFT", 300, -128)
+    frame.receiveCollectorCheckbox:SetPoint("TOPLEFT", 18, -128)
     frame.mapDebugButton = CreateFrame("Button", nil, settings, "UIPanelButtonTemplate")
     frame.mapDebugButton:SetSize(160, 22)
     frame.mapDebugButton:SetPoint("TOPLEFT", 300, -300)
@@ -1206,7 +1227,7 @@ function SearchUI:Toggle()
     frame.exportButton:SetPoint("TOPLEFT", 426, -130)
     frame.importButton:SetPoint("TOPLEFT", 426, -158)
     local debugControls = { settings.debugSection, frame.logsCheckbox, frame.mapDebugButton, frame.importTestButton, frame.resetDataButton, frame.testBroadcastButton, frame.testPartyButton }
-    local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.receiveGuildCheckbox, frame.sharePartyButton, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
+    local playerControls = { settings.playerSection, frame.autoConfirmCheckbox, frame.allMapItemsCheckbox, frame.sendGuildCheckbox, frame.sendCollectorCheckbox, frame.receiveGuildCheckbox, frame.receiveCollectorCheckbox, frame.sharePartyButton, settings.dataBackground, settings.dataScroll, frame.exportButton, frame.importButton }
     local function setDebugVisible(visible)
       settings.debugVisible = visible and true or false
       for _, control in ipairs(debugControls) do
@@ -1231,9 +1252,14 @@ function SearchUI:Toggle()
         frame.resetDataButton:SetPoint("TOPLEFT", 300, -328)
         frame.allMapItemsCheckbox:SetPoint("TOPLEFT", 18, -48)
         frame.receiveGuildCheckbox:SetPoint("TOPLEFT", 18, -88)
-        settings.dataBackground:SetPoint("TOPLEFT", 18, -152)
-        frame.exportButton:SetPoint("TOPLEFT", 426, -152)
-        frame.importButton:SetPoint("TOPLEFT", 426, -180)
+        frame.sendCollectorCheckbox:SetPoint("TOPLEFT", 300, -128)
+        frame.receiveCollectorCheckbox:SetPoint("TOPLEFT", 18, -128)
+        settings.dataBackground:ClearAllPoints()
+        settings.dataBackground:SetPoint("TOPLEFT", frame.sharePartyButton, "BOTTOMLEFT", -20, -18)
+        frame.exportButton:ClearAllPoints()
+        frame.exportButton:SetPoint("TOPLEFT", settings.dataBackground, "TOPRIGHT", 26, 0)
+        frame.importButton:ClearAllPoints()
+        frame.importButton:SetPoint("TOPLEFT", settings.dataBackground, "TOPRIGHT", 26, -28)
       end
       settings.devToggle:SetText(visible and "Player" or "Dev")
     end
@@ -1263,7 +1289,7 @@ function SearchUI:Toggle()
     end)
     local pageLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     pageLabel:SetPoint("BOTTOM", 0, 15)
-    pageLabel:SetText("Page 1 / 1")
+    pageLabel:SetText("Items 0 / 0")
     local nextPage = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
     nextPage:SetSize(28, 22)
     nextPage:SetPoint("BOTTOMRIGHT", -34, 10)
@@ -1383,7 +1409,9 @@ function SearchUI:ApplyElvUISkin(frame)
     S:HandleCheckBox(frame.autoConfirmCheckbox)
     S:HandleCheckBox(frame.allMapItemsCheckbox)
     S:HandleCheckBox(frame.sendGuildCheckbox)
+    S:HandleCheckBox(frame.sendCollectorCheckbox)
     S:HandleCheckBox(frame.receiveGuildCheckbox)
+    S:HandleCheckBox(frame.receiveCollectorCheckbox)
     if S.HandleButton then S:HandleButton(frame.sharePartyButton) end
     if S.HandleButton then S:HandleButton(frame.testPartyButton) end
   end

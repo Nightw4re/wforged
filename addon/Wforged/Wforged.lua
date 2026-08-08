@@ -52,6 +52,26 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "collector on" or command == "friends on" then
+    addon.Sync.collectorEnabled = true
+    addon.DB:GetSettings().receiveCollectorUpdates = true
+    addon:Print("Friend data receiving enabled. Incoming Wforged whispers will be imported after normal validation.")
+    return
+  end
+
+  if command == "collector off" or command == "friends off" then
+    addon.Sync.collectorEnabled = false
+    addon.DB:GetSettings().receiveCollectorUpdates = false
+    addon:Print("Friend data receiving disabled. Incoming Wforged whispers will be ignored.")
+    return
+  end
+
+  if command == "collector" or command == "friends" then
+    local enabled = addon.Sync.collectorEnabled or addon.DB:GetSettings().receiveCollectorUpdates == true
+    addon:Print("Friend data receiving: " .. (enabled and "enabled" or "disabled") .. ". Use /wforged friends on|off.")
+    return
+  end
+
   if command == "search" or command == "ui" then
     addon.SearchUI:Toggle()
     return

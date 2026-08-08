@@ -113,6 +113,8 @@ function DB:Init()
     db.settings.autoConfirmWorldforged = true
   end
   if db.settings.sendGuildUpdates == nil then db.settings.sendGuildUpdates = true end
+  if db.settings.sendCollectorUpdates == nil then db.settings.sendCollectorUpdates = true end
+  if db.settings.receiveCollectorUpdates == nil then db.settings.receiveCollectorUpdates = true end
   if db.settings.receiveGuildUpdates == nil then db.settings.receiveGuildUpdates = true end
 
   self.data = db
