@@ -312,6 +312,7 @@ function VendorScan:ScanUpgradeFrameContents()
   local candidates = {}
   local signatures = {}
   local captured = 0
+  local needsRescan = false
 
   for _, child in ipairs(frames) do
     if child and child.GetObjectType and child:GetObjectType() == "Button" then
@@ -324,6 +325,9 @@ function VendorScan:ScanUpgradeFrameContents()
         local itemId = child.itemID or child.itemId or nil
         local itemLink = buildItemLinkFromId(itemId, texts[1])
         local parsedCost = parseCostFromTexts(costTexts)
+        if not parsedCost then
+          needsRescan = true
+        end
         local sourceItemId, sourceItemName, sourceRawText = parseSourceItemFromTexts(costTexts)
         local signature = buildButtonSignature(buttonName, itemId, texts, parsedCost)
 
@@ -346,7 +350,7 @@ function VendorScan:ScanUpgradeFrameContents()
 
   table.sort(signatures)
   local frameSignature = table.concat(signatures, "###")
-  if self.lastUpgradeFrameSignature == frameSignature then
+  if self.lastUpgradeFrameSignature == frameSignature and not needsRescan then
     return 0
   end
   self.lastUpgradeFrameSignature = frameSignature
@@ -441,6 +445,9 @@ function VendorScan:ScanUpgradeFrameContents()
   if captured > 0 then
     addon:LootDebug("Upgrade frame scan captured items: " .. tostring(captured))
     if addon.DB and addon.DB.Save then addon.DB:Save() end
+    if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+      addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
+    end
   end
 
   return captured

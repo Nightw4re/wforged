@@ -52,6 +52,26 @@ local function handleSlashCommand(message)
     return
   end
 
+  if command == "collector on" or command == "friends on" then
+    addon.Sync.collectorEnabled = true
+    addon.DB:GetSettings().receiveCollectorUpdates = true
+    addon:Print("Friend data receiving enabled. Incoming Wforged whispers will be imported after normal validation.")
+    return
+  end
+
+  if command == "collector off" or command == "friends off" then
+    addon.Sync.collectorEnabled = false
+    addon.DB:GetSettings().receiveCollectorUpdates = false
+    addon:Print("Friend data receiving disabled. Incoming Wforged whispers will be ignored.")
+    return
+  end
+
+  if command == "collector" or command == "friends" then
+    local enabled = addon.Sync.collectorEnabled or addon.DB:GetSettings().receiveCollectorUpdates == true
+    addon:Print("Friend data receiving: " .. (enabled and "enabled" or "disabled") .. ". Use /wforged friends on|off.")
+    return
+  end
+
   if command == "search" or command == "ui" then
     addon.SearchUI:Toggle()
     return
@@ -309,6 +329,32 @@ local function handleSlashCommand(message)
         addon:LootDebug("Inspect fingerprint: " .. tostring(fingerprint))
       end
     end
+    local itemKey = addon.DB:BuildItemKey(tonumber(inspectId))
+    local bucket = addon.DB.data.itemsByKey and addon.DB.data.itemsByKey[itemKey]
+    if bucket then
+      local preferred = addon.DB:GetPreferredFingerprint(itemKey, bucket)
+      local preferredEntry = preferred and addon.DB.data.itemsByFingerprint[preferred]
+      local preferredLocation = preferred and addon.DB:GetBestLocationForFingerprint(preferred)
+      addon:Print(string.format(
+        "Inspect preferred: fingerprint=%s source=%s map=%s x=%s y=%s",
+        tostring(preferred or "nil"), tostring(preferredEntry and preferredEntry.lastSource or "nil"),
+        tostring(preferredLocation and preferredLocation.mapId or preferredEntry and preferredEntry.lastMapId or "nil"),
+        tostring(preferredLocation and preferredLocation.x or preferredEntry and preferredEntry.lastX or "nil"),
+        tostring(preferredLocation and preferredLocation.y or preferredEntry and preferredEntry.lastY or "nil")
+      ))
+      local searchResults = addon.DB:SearchItems(string.lower(preferredEntry and preferredEntry.itemName or ""), {})
+      for _, result in ipairs(searchResults or {}) do
+        if tonumber(result.itemId) == tonumber(inspectId) then
+          addon:Print(string.format(
+            "Inspect search result: level=%s upgrade=%s location=%s map=%s x=%s y=%s",
+            tostring(result.itemLevel or "nil"), tostring(result.isUpgrade or false),
+            tostring(result.lastZoneName or "nil"), tostring(result.lastMapId or "nil"),
+            tostring(result.lastX or "nil"), tostring(result.lastY or "nil")
+          ))
+          break
+        end
+      end
+    end
     addon:Print(string.format("Inspect found %d variant(s).", found))
     return
   end
@@ -392,6 +438,12 @@ registerEvent("PLAYER_LOGIN", function(self)
       self.ItemScan:RepairStoredItems(nil, 1)
     end)
   end
+  if C_Timer and C_Timer.After and self.DB and self.DB.upgradeLocationRepairQueue then
+    C_Timer.After(5, function()
+      self.DB.upgradeLocationRepairReady = true
+      self:LootDebug("Upgrade location repair started after login delay.")
+    end)
+  end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
     frame.elapsed = (frame.elapsed or 0) + elapsed
     frame.pendingElapsed = (frame.pendingElapsed or 0) + elapsed
@@ -403,6 +455,9 @@ registerEvent("PLAYER_LOGIN", function(self)
       end
       if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
         local repaired = self.ItemScan:RepairStoredItems(nil, 1)
+      end
+      if self.DB and self.DB.ProcessUpgradeLocationRepair then
+        self.DB:ProcessUpgradeLocationRepair(1)
       end
       if frame.pendingElapsed >= 1 and self.ItemScan and self.ItemScan.RetryPendingItems then
         frame.pendingElapsed = 0

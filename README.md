@@ -4,7 +4,7 @@
 
 Wforged collects Worldforged item locations and item information in World of Warcraft. It works locally, supports ElvUI when installed, and can share compact item observations with guild members who also use the addon.
 
-The release currently includes a bundled snapshot of **257 unique items including located base items and upgrades**.
+The release currently includes a bundled snapshot of **982 unique items including located base items and upgrades**.
 
 ## Features
 
@@ -33,7 +33,7 @@ The addon cannot query CurseForge directly from the game client, so the page is 
 2. Enable Wforged on the character selection screen.
 3. Reload the UI after installing or updating the addon.
 
-For local development, `npm test` deploys the addon to the configured game client and runs the automated checks first. To refresh the bundled snapshot from a SavedVariables file, run:
+For local development, `npm test` copies the addon to the configured game client and runs the automated checks first. To copy it manually, run `npm run copy-local`. To refresh the bundled snapshot from a SavedVariables file, run:
 
 ```text
 npm run bundle-data -- "C:\path\to\Wforged.lua" 1.0.2

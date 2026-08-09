@@ -5,18 +5,76 @@ local output = "addon/Wforged/BundledData.lua"
 local tocPath = "addon/Wforged/Wforged.toc"
 local readmePath = "README.md"
 
-dofile(source)
+local function findMatchingBrace(text, opening)
+  local depth, quote, escaped = 0, nil, false
+  for index = opening, #text do
+    local char = text:sub(index, index)
+    if quote then
+      if escaped then
+        escaped = false
+      elseif char == "\\" then
+        escaped = true
+      elseif char == quote then
+        quote = nil
+      end
+    elseif char == '"' or char == "'" then
+      quote = char
+    elseif char == "{" then
+      depth = depth + 1
+    elseif char == "}" then
+      depth = depth - 1
+      if depth == 0 then return index end
+    end
+  end
+  return nil
+end
+
+local function readFingerprintEntries(path)
+  local handle = assert(io.open(path, "r"))
+  local text = handle:read("*a")
+  handle:close()
+
+  local markerStart = assert(text:find("%[\"itemsByFingerprint\"%]%s*=%s*{"),
+    "Missing itemsByFingerprint in SavedVariables")
+  local tableStart = assert(text:find("{", markerStart), "Invalid itemsByFingerprint table")
+  local tableEnd = assert(findMatchingBrace(text, tableStart), "Unclosed itemsByFingerprint table")
+  local entries, cursor = {}, tableStart + 1
+
+  while cursor < tableEnd do
+    local keyStart, keyEnd, key = text:find("%[\"([^\"]+)\"%]%s*=%s*{", cursor)
+    if not keyStart or keyStart >= tableEnd then break end
+    local valueStart = text:find("{", keyEnd - 1, true)
+    local valueEnd = assert(findMatchingBrace(text, valueStart), "Unclosed fingerprint entry")
+    local chunk = text:sub(valueStart, valueEnd)
+    local loader = assert(loadstring("return " .. chunk))
+    entries[#entries + 1] = { fingerprint = key, entry = loader() }
+    cursor = valueEnd + 1
+  end
+  return entries
+end
+
+local fingerprintEntries = readFingerprintEntries(source)
 local latest = {}
-for _, entry in pairs(WforgedDB.itemsByFingerprint or {}) do
+local function recordScore(entry)
+  local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
+  local located = mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
+  local cost = tonumber(entry.upgradeCost or 0) or 0
+  return (located and 1000000000000 or 0) + (cost > 0 and 1000000000 or 0)
+    + (tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0)
+end
+for _, record in ipairs(fingerprintEntries) do
+  local entry = record.entry
   local id = tonumber(entry.itemId)
   local upgrade = tonumber(entry.upgradeLevel or 0) or 0
   local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
   local hasLocation = mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
   local hasUpgradeCost = tonumber(entry.upgradeCost or 0) and tonumber(entry.upgradeCost or 0) > 0
   if id and entry.isWorldforged and entry.lastSource ~= "merchant" and (hasLocation or hasUpgradeCost) then
-    local variantKey = entry.fingerprint or table.concat({ tostring(id), tostring(entry.lastMapId or ""), tostring(entry.lastX or ""), tostring(entry.lastY or ""), tostring(upgrade), tostring(entry.lastSeenAt or entry.firstSeenAt or 0), tostring(entry.lastSource or "") }, ":")
+    -- Item IDs identify the scaled/upgrade variants in this client. Keep one
+    -- best snapshot per ID instead of exporting repeated fingerprints.
+    local variantKey = tostring(id)
     local current = latest[variantKey]
-    if not current or (tonumber(entry.lastSeenAt or 0) or 0) > (tonumber(current.lastSeenAt or 0) or 0) then
+    if not current or recordScore(entry) > recordScore(current) then
       latest[variantKey] = entry
     end
   end
@@ -40,7 +98,7 @@ for _, variantKey in ipairs(variantKeys) do
   local entry = latest[variantKey]
   local id = tonumber(entry.itemId)
   local upgrade = tonumber(entry.upgradeLevel or 0) or 0
-  local exportFingerprint = entry.fingerprint or table.concat({ tostring(id), tostring(entry.lastMapId or ""), tostring(entry.lastX or ""), tostring(entry.lastY or ""), tostring(upgrade), tostring(entry.lastSeenAt or entry.firstSeenAt or 0), tostring(entry.lastSource or "") }, ":")
+  local exportFingerprint = variantKey
   local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
   local observedAt = tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0
   if mapId and x and y then
@@ -70,7 +128,7 @@ local function replaceFile(path, pattern, replacement)
 end
 
 local summary = string.format("Bundled snapshot: %d unique items including located base items and upgrades.", #variantKeys)
-replaceFile(tocPath, "Bundled snapshot: %d+ unique [%a ]+items including located base items and upgrades%.", summary)
+replaceFile(tocPath, "Bundled snapshot: %d+ unique items including located base items and upgrades%.", summary)
 replaceFile(readmePath, "The release currently includes a bundled snapshot.-\n",
   string.format("The release currently includes a bundled snapshot of **%d unique items including located base items and upgrades**.\n", #variantKeys))
 print(string.format("Exported %d unique bundled items to %s", #variantKeys, output))

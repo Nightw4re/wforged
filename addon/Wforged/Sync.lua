@@ -9,6 +9,8 @@ Sync.importBatchSize = 2
 Sync.importInterval = 0.5
 Sync.shareChunkSize = 180
 Sync.shareChunkDelay = 0.15
+Sync.collectorEnabled = false
+Sync.collectorTargets = { "Nightware", "Kunhuta" }
 
 local function shareChecksum(value)
   local sum = 0
@@ -369,6 +371,21 @@ function Sync:BroadcastItem(fingerprint)
       addon:LootDebug("Guild broadcast skipped: addon-message API is unavailable.")
     end
     addon:LootDebug("Guild broadcast sent: " .. tostring(entry.itemName or entry.itemId))
+
+    -- Collector whispers use the same compact payload as the guild update.
+    -- The receiver must explicitly enable collector mode before importing it.
+    if settings.sendCollectorUpdates == true then
+      for _, target in ipairs(self.collectorTargets) do
+        if C_ChatInfo and C_ChatInfo.SendAddonMessage then
+          C_ChatInfo.SendAddonMessage(self.prefix, payload, "WHISPER", target)
+        elseif SendAddonMessage then
+          SendAddonMessage(self.prefix, payload, "WHISPER", target)
+        end
+        addon:LootDebug("Collector whisper sent to " .. tostring(target))
+      end
+    else
+      addon:LootDebug("Collector whisper skipped: sending is disabled.")
+    end
   else
     addon:LootDebug("Guild broadcast skipped: sending is disabled.")
   end
@@ -459,6 +476,10 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
   local isSelf = playerName and sender and (sender == playerName or sender:match("^" .. playerName .. "-"))
   if isSelf then
     addon:LootDebug("Guild message ignored: sender is this player.")
+    return
+  end
+  if channel == "WHISPER" and not self.collectorEnabled and addon.DB:GetSettings().receiveCollectorUpdates ~= true then
+    addon:LootDebug("Collector whisper ignored: collector mode is disabled.")
     return
   end
   local settings = addon.DB:GetSettings()
