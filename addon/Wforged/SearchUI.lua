@@ -514,7 +514,7 @@ local function configureRow(row)
       end
       if IsShiftKeyDown and IsShiftKeyDown() and ChatEdit_InsertLink and clickedRow.result.itemLink then
         addon:LootDebug("Search click inserted item link into chat.")
-        ChatEdit_InsertLink(clickedRow.result.itemLink)
+        ChatEdit_InsertLink(buildChatItemLink(clickedRow.result))
         return
       end
       SearchUI:SetSelectedResult(clickedRow.result)
