@@ -25,6 +25,18 @@ test('vendor coordinates are rejected as item locations', () => {
   assert.match(db, /source == "merchant"/);
 });
 
+test('preferred fingerprint can select a located imported variant', () => {
+  assert.match(db, /validated spawn location/);
+  assert.match(db, /self:GetBestLocationForFingerprint\(fingerprint\)/);
+});
+
+test('search restores a missing zone name from an exact stored location', () => {
+  assert.match(db, /function DB:GetStoredLocationName/);
+  assert.match(db, /storedLocationKey\(itemId, location\)/);
+  assert.match(db, /sourceEntry and sourceEntry\.itemId/);
+  assert.match(db, /location\.zoneName = storedName\.zoneName/);
+});
+
 test('upgrade location repair is queued and processed incrementally', () => {
   assert.match(db, /upgradeLocationRepairQueue/);
   assert.match(db, /function DB:ProcessUpgradeLocationRepair\(limit\)/);
@@ -44,4 +56,8 @@ test('UI uses stored upgrade metadata for price and previous-item actions', () =
   assert.match(db, /upgradeCost = entry\.upgradeCost or/);
   assert.match(ui, /result\.isUpgrade == true/);
   assert.match(ui, /SearchUI:SearchForSource\(result\)/);
+});
+
+test('shift-click inserts a colorized chat item link', () => {
+  assert.match(ui, /ChatEdit_InsertLink\(buildChatItemLink\(clickedRow\.result\)\)/);
 });
