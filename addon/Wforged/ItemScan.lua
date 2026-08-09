@@ -657,7 +657,8 @@ function ItemScan:QueuePendingItem(itemLink, sourceType, context)
   local continent = GetCurrentMapContinent and GetCurrentMapContinent() or nil
   local zone = GetCurrentMapZone and GetCurrentMapZone() or nil
   local rawZoneName = GetRealZoneText and GetRealZoneText() or GetZoneText and GetZoneText() or nil
-  local suppressLocation = sourceType == "upgrade-frame" or sourceType == "inventory" or sourceType == "equipped"
+  local suppressLocation = sourceType == "merchant" or sourceType == "upgrade-frame"
+    or sourceType == "inventory" or sourceType == "equipped"
   local pendingKey = buildPendingKey(itemLink, itemId)
   local storedMapId = suppressLocation and nil or ((context and context.mapId) or mapId)
   local storedContinent = suppressLocation and nil or ((context and context.continent) or continent)

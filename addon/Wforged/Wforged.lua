@@ -412,6 +412,12 @@ registerEvent("PLAYER_LOGIN", function(self)
       self.ItemScan:RepairStoredItems(nil, 1)
     end)
   end
+  if C_Timer and C_Timer.After and self.DB and self.DB.upgradeLocationRepairQueue then
+    C_Timer.After(5, function()
+      self.DB.upgradeLocationRepairReady = true
+      self:LootDebug("Upgrade location repair started after login delay.")
+    end)
+  end
   self.eventFrame:SetScript("OnUpdate", function(frame, elapsed)
     frame.elapsed = (frame.elapsed or 0) + elapsed
     frame.pendingElapsed = (frame.pendingElapsed or 0) + elapsed
@@ -423,6 +429,9 @@ registerEvent("PLAYER_LOGIN", function(self)
       end
       if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
         local repaired = self.ItemScan:RepairStoredItems(nil, 1)
+      end
+      if self.DB and self.DB.ProcessUpgradeLocationRepair then
+        self.DB:ProcessUpgradeLocationRepair(1)
       end
       if frame.pendingElapsed >= 1 and self.ItemScan and self.ItemScan.RetryPendingItems then
         frame.pendingElapsed = 0

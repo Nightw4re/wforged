@@ -644,7 +644,9 @@ function SearchUI:Refresh(query)
     elseif key == "quality" then
       value = safeSortNumber(result.quality)
     elseif key == "location" then
-      local isUpgrade = (tonumber(result.upgradeLevel or 0) or 0) > 0
+      local isUpgrade = result.isUpgrade == true
+        or (tonumber(result.upgradeLevel or 0) or 0) > 0
+        or result.upgradeCost ~= nil
       local location = getLocationText(result)
       local missing = not isUpgrade and location == "-"
       rank = missing and 3 or (isUpgrade and 1 or 2)
@@ -725,7 +727,9 @@ function SearchUI:Refresh(query)
       row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
       row.levelText:SetText(metadataPending and "-" or tostring(result.itemLevel or 0))
       row.qualityText:SetText(metadataPending and "-" or getQualityName(result.quality))
-      local isUpgrade = (tonumber(result.upgradeLevel or 0) or 0) > 0
+      local isUpgrade = result.isUpgrade == true
+        or (tonumber(result.upgradeLevel or 0) or 0) > 0
+        or result.upgradeCost ~= nil
       -- Action controls are recycled between rows. Always reset their state
       -- before showing the one valid action for the current result.
       row.findButton:Hide()
