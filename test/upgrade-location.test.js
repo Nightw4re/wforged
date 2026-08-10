@@ -61,3 +61,20 @@ test('UI uses stored upgrade metadata for price and previous-item actions', () =
 test('shift-click inserts a colorized chat item link', () => {
   assert.match(ui, /ChatEdit_InsertLink\(buildChatItemLink\(clickedRow\.result\)\)/);
 });
+
+test('WFG6 parser preserves empty fields between location metadata', () => {
+  const sync = fs.readFileSync(path.join(__dirname, '..', 'addon', 'Wforged', 'Sync.lua'), 'utf8');
+  assert.match(sync, /string\.find\(text, "\\|", start, true\)/);
+  assert.doesNotMatch(sync, /gmatch\(tostring\(record or ""\), "\[\^\|\]\+"\)/);
+});
+
+test('startup clears malformed imported fingerprints from location display', () => {
+  assert.match(db, /function DB:CleanupMalformedImportedLocations/);
+  assert.match(db, /entry\.lastZoneName = nil/);
+  assert.match(db, /malformedImportedLocationsV1/);
+});
+
+test('unknown zone keeps map coordinates usable in the search UI', () => {
+  assert.doesNotMatch(ui, /result\.zoneRepairPending or not result\.lastZoneName/);
+  assert.match(ui, /return "unknown zone"/);
+});

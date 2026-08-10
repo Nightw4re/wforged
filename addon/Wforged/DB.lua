@@ -129,10 +129,38 @@ function DB:Init()
   end
   self:CleanupInvalidUpgradePlaceholders()
   self:CleanupInvalidUpgradeCosts()
+  self:CleanupMalformedImportedLocations()
   self:PurgeUnknownMapLocations()
   self:ClearInventoryLocations()
   self:RestoreDeadminesMapLocation()
   self:RepairUpgradeLocations()
+end
+
+function DB:CleanupMalformedImportedLocations()
+  if not self.data or self.data.meta.malformedImportedLocationsV1 then return end
+  local changed = 0
+  local function isMalformed(value)
+    return type(value) == "string" and value:match("^%d+%s+%d+:%d+:") ~= nil
+  end
+  for _, entry in pairs(self.data.itemsByFingerprint or {}) do
+    if entry and isMalformed(entry.lastZoneName) then
+      entry.lastZoneName = nil
+      entry.zoneRepairPending = true
+      changed = changed + 1
+    end
+  end
+  for _, points in pairs(self.data.spawnPointsByItem or {}) do
+    for _, point in pairs(points or {}) do
+      if point and isMalformed(point.zoneName) then
+        point.zoneName = nil
+        changed = changed + 1
+      end
+    end
+  end
+  self.data.meta.malformedImportedLocationsV1 = true
+  if changed > 0 then
+    addon:LootDebug(string.format("Cleaned malformed imported locations: %d record(s).", changed))
+  end
 end
 
 function DB:RestoreDeadminesMapLocation()

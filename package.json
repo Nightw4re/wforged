@@ -1,6 +1,6 @@
 {
   "name": "wforged",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Beta World of Warcraft addon for collecting and sharing Worldforged item data.",
   "private": true,
   "scripts": {

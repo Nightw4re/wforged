@@ -274,10 +274,6 @@ local function hasUsableLocation(result)
     return false
   end
 
-  if result.zoneRepairPending or not result.lastZoneName or result.lastZoneName == "" then
-    return false
-  end
-
   if result.lastSource == "inventory" or result.lastSource == "equipped" then
     return false
   end
@@ -303,7 +299,7 @@ local function getLocationText(result)
     result.lastMapId, result.lastContinent, result.lastZone, result.lastZoneName
   ) or result.lastZoneName)
   if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
-    return "-"
+    return "unknown zone"
   end
   return zoneName
 end

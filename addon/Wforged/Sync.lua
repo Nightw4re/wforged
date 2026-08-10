@@ -35,8 +35,17 @@ end
 
 local function splitPayload(record)
   local fields = {}
-  for value in string.gmatch(tostring(record or ""), "[^|]+") do
-    fields[#fields + 1] = decode(value)
+  local text = tostring(record or "")
+  local start = 1
+  while true do
+    local separator = string.find(text, "|", start, true)
+    if separator then
+      fields[#fields + 1] = decode(string.sub(text, start, separator - 1))
+      start = separator + 1
+    else
+      fields[#fields + 1] = decode(string.sub(text, start))
+      break
+    end
   end
   return fields
 end
