@@ -313,6 +313,10 @@ local function getQualityName(quality)
   return ({ [0] = "Poor", [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary" })[tonumber(quality)] or "-"
 end
 
+local function closeFilterDropdown()
+  if CloseDropDownMenus then CloseDropDownMenus() end
+end
+
 local function findSourceResult(result)
   if not result or not addon.DB or not addon.DB.SearchItems then return nil end
   local sourceKey = result.sourceItemKey or result.resolvedSourceItemKey
@@ -332,6 +336,28 @@ local function findSourceResult(result)
     end
   end
   return best
+end
+
+local function getMapResult(result)
+  if not result then return nil end
+  local source = findSourceResult(result)
+  if source and source.lastX and source.lastY then return source end
+  if addon.DB and result.itemKey then
+    local resolver = addon.DB.GetMapLocationForItem or addon.DB.GetResolvedSourceLocation
+    local location = resolver and resolver(addon.DB, result.itemKey) or nil
+    if location and location.x and location.y then
+      local resolved = {}
+      for key, value in pairs(result) do resolved[key] = value end
+      resolved.lastMapId = location.mapId
+      resolved.lastContinent = location.continent
+      resolved.lastZone = location.zone
+      resolved.lastZoneName = location.zoneName
+      resolved.lastX = location.x
+      resolved.lastY = location.y
+      return resolved
+    end
+  end
+  return source or result
 end
 
 local function buildUpgradeShareText(result)
@@ -387,7 +413,7 @@ end
 local function getStatValue(result, statName)
   local text = string.lower(tostring(result.statsText or "") .. " | " .. tostring(result.tooltipText or ""))
   local escaped = statName:gsub("%W", "%%%0")
-  local value = text:match("([%+%-]?%d+)%s+" .. escaped)
+  local value = text:match("([%+%-]?%d+)[^|\n]*" .. escaped)
   return value and tostring(tonumber(value) or value) or "-"
 end
 
@@ -498,18 +524,22 @@ local function createRow(parent, index)
   row.shareButton:SetWidth(44)
   row.shareButton:SetHeight(22)
   row.shareButton:SetPoint("LEFT", row, "LEFT", 700, 0)
+  row.shareButton:SetFrameLevel(row:GetFrameLevel() + 2)
   row.shareButton:SetText("Share")
 
   row.showMapButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   row.showMapButton:SetWidth(36)
   row.showMapButton:SetHeight(20)
   row.showMapButton:SetPoint("LEFT", row, "LEFT", 750, 0)
+  row.showMapButton:SetFrameLevel(row:GetFrameLevel() + 2)
+  row.showMapButton:EnableMouse(true)
   row.showMapButton:SetText("Map")
 
   row.findButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   row.findButton:SetWidth(22)
   row.findButton:SetHeight(22)
   row.findButton:SetPoint("LEFT", row, "LEFT", 800, 0)
+  row.findButton:SetFrameLevel(row:GetFrameLevel() + 2)
   row.findButton:SetText("")
   row.findButton.icon = row.findButton:CreateTexture(nil, "ARTWORK")
   row.findButton.icon:SetSize(14, 14)
@@ -540,6 +570,7 @@ local function createTableHeader(parent, text, key, x, width)
   header.sortArrow:SetPoint("CENTER", header, "RIGHT", -11, 0)
   header.sortArrow:Hide()
   header:SetScript("OnClick", function()
+    closeFilterDropdown()
     if SearchUI.sortKey == key then
       SearchUI.sortAscending = not SearchUI.sortAscending
     else
@@ -620,7 +651,13 @@ function SearchUI:UpdateDynamicColumns(query)
   end
   for index, header in ipairs(frame.statHeaders or {}) do
     local active = statNames[index]
-    header.label = index == 1 and (#statNames > 0 and "Stats" or "") or ""
+    if index == 1 and #statNames > 0 then
+      local labels = {}
+      for _, statName in ipairs(statNames) do labels[#labels + 1] = getStatAbbreviation(statName) end
+      header.label = table.concat(labels, "   |   ")
+    else
+      header.label = ""
+    end
     header:SetText(header.label)
     header:SetShown(index == 1 and #statNames > 0)
     if index == 1 and #statNames > 0 then
@@ -670,17 +707,16 @@ end
 
 local function configureRow(row)
   row:SetScript("OnMouseUp", function(clickedRow, button)
+    closeFilterDropdown()
     if not clickedRow.result or not isUpgradeResult(clickedRow.result) then return end
     local key = selectionKey(clickedRow.result)
     if button == "RightButton" then
       SearchUI.selectedUpgrades[key] = nil
       SearchUI:Refresh()
-    elseif button == "LeftButton" then
-      SearchUI.selectedUpgrades[key] = true
-      SearchUI:Refresh()
     end
   end)
   row:SetScript("OnClick", function(clickedRow)
+    closeFilterDropdown()
     if clickedRow.result then
       local clicked = clickedRow.result
       addon:LootDebug(string.format(
@@ -702,6 +738,10 @@ local function configureRow(row)
         addon:LootDebug("Search click inserted item link into chat.")
         ChatEdit_InsertLink(buildChatItemLink(clickedRow.result))
         return
+      end
+      if isUpgradeResult(clickedRow.result) then
+        SearchUI.selectedUpgrades[selectionKey(clickedRow.result)] = true
+        SearchUI:Refresh()
       end
       SearchUI:SetSelectedResult(clickedRow.result)
     end
@@ -900,7 +940,7 @@ function SearchUI:Refresh(query)
     end
   end
   if self.frame and self.frame.upgradeTotal then
-    self.frame.upgradeTotal:SetText(string.format("Selected: %d", selectedTotal))
+    self.frame.upgradeTotal:SetText(string.format("Selected: %6d", selectedTotal))
     if self.frame.upgradeTotalIcon then
       self.frame.upgradeTotalIcon.itemLink = GetItemInfo and select(2, GetItemInfo(375250)) or nil
     end
@@ -959,6 +999,7 @@ function SearchUI:Refresh(query)
       row.findButton:SetScript("OnClick", nil)
       row.shareButton:SetScript("OnClick", nil)
       row.showMapButton:SetScript("OnClick", nil)
+      row.showMapButton:SetScript("OnMouseUp", nil)
       if isUpgrade then
         row.locationText:SetText(upgradeText or "unknown cost")
         row.locationText:SetJustifyH("RIGHT")
@@ -976,8 +1017,8 @@ function SearchUI:Refresh(query)
           row.currencyButton.count:SetText("")
           row.currencyButton.count:Hide()
           row.currencyButton:ClearAllPoints()
-          row.currencyButton:SetPoint("RIGHT", row.locationText, "RIGHT", 0, 0)
-          row.locationText:SetWidth(self.frame.locationHeader:GetWidth() - 18)
+          row.locationText:SetWidth(self.frame.locationHeader:GetWidth() - 20)
+          row.currencyButton:SetPoint("LEFT", row.locationText, "RIGHT", 4, 0)
           row.currencyButton:Show()
         else
           row.currencyButton:Hide()
@@ -1006,10 +1047,9 @@ function SearchUI:Refresh(query)
           openChatWithText(buildUpgradeShareText(result))
         end)
         row.showMapButton:SetScript("OnClick", function()
-          local source = findSourceResult(result)
-          if source and addon.MapNotes then
-            addon.MapNotes:ShowOnMap(source, true)
-          end
+          local source = getMapResult(result)
+          addon:LootDebug(string.format("Search map click: itemId=%s sourceId=%s mapId=%s", tostring(result.itemId or "?"), tostring(source and source.itemId or "?"), tostring(source and source.lastMapId or "?")))
+          if addon.MapNotes and source then addon.MapNotes:ShowOnMap(source, true) end
         end)
         row.shareButton:SetText("Share")
         row.showMapButton:SetText("Map")
@@ -1024,9 +1064,8 @@ function SearchUI:Refresh(query)
           openChatWithText(buildShareText(result))
         end)
         row.showMapButton:SetScript("OnClick", function()
-          if addon.MapNotes then
-            addon.MapNotes:ShowOnMap(result, true)
-          end
+          addon:LootDebug(string.format("Search map click: itemId=%s", tostring(result.itemId or "?")))
+          if addon.MapNotes then addon.MapNotes:ShowOnMap(result, true) end
         end)
         row.shareButton:SetText("Share")
         row.showMapButton:SetText("Map")
@@ -1047,6 +1086,20 @@ function SearchUI:Refresh(query)
   end
 
   self:SetSelectedResult(pageResults[1])
+end
+
+function SearchUI:ScheduleRefresh(query)
+  if not C_Timer or not C_Timer.After then
+    self:Refresh(query)
+    return
+  end
+  self.searchRefreshToken = (self.searchRefreshToken or 0) + 1
+  local token = self.searchRefreshToken
+  C_Timer.After(0.12, function()
+    if self.searchRefreshToken == token then
+      self:Refresh(query)
+    end
+  end)
 end
 
 function SearchUI:SaveState()
@@ -1111,6 +1164,9 @@ function SearchUI:Toggle()
     frame:SetPoint(state.point or "CENTER", UIParent, state.relativePoint or "CENTER", state.x or 0, state.y or 0)
     frame:SetMovable(true)
     frame:EnableMouse(true)
+    frame:SetScript("OnMouseDown", function()
+      closeFilterDropdown()
+    end)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
@@ -1190,7 +1246,7 @@ function SearchUI:Toggle()
           SearchUI.suppressRefresh = false
         end
         SearchUI.page = 1
-        SearchUI:Refresh(cleaned or box:GetText())
+        SearchUI:ScheduleRefresh(cleaned or box:GetText())
       end
     end)
     frame.editBox = editBox
@@ -1228,6 +1284,7 @@ function SearchUI:Toggle()
     frame.selectAllUpgrades:SetPoint("TOPLEFT", 610, -166)
     frame.selectAllUpgrades:SetText("Select all")
     frame.selectAllUpgrades:SetScript("OnClick", function()
+      closeFilterDropdown()
       for _, result in ipairs(SearchUI.allResults or {}) do
         if isUpgradeResult(result) then
           SearchUI.selectedUpgrades[selectionKey(result)] = true
@@ -1240,6 +1297,7 @@ function SearchUI:Toggle()
     frame.clearSelectedUpgrades:SetPoint("LEFT", frame.selectAllUpgrades, "RIGHT", 5, 0)
     frame.clearSelectedUpgrades:SetText("Clear")
     frame.clearSelectedUpgrades:SetScript("OnClick", function()
+      closeFilterDropdown()
       SearchUI.selectedUpgrades = {}
       SearchUI:Refresh()
     end)

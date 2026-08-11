@@ -1044,7 +1044,7 @@ function DB:GetMapLocationForItem(itemKey)
   if sourceName and sourceName ~= "" then
     local wanted = string.lower(strtrim(sourceName))
     local currentLevel = tonumber(currentEntry and (currentEntry.itemLevel or currentEntry.effectiveLevel)) or math.huge
-    local bestLevel, bestLocation = -math.huge, nil
+    local bestLevel, bestLocation, bestCandidateKey = -math.huge, nil, nil
     for candidateKey, candidateBucket in pairs(self.data.itemsByKey or {}) do
       local candidateName = candidateBucket and candidateBucket.itemName
       if candidateKey ~= itemKey and candidateName and string.lower(strtrim(candidateName)) == wanted then
@@ -1058,12 +1058,13 @@ function DB:GetMapLocationForItem(itemKey)
               and candidateLevel + 1 <= currentLevel and candidateLevel > bestLevel then
               bestLevel = candidateLevel
               bestLocation = candidateLocation
+              bestCandidateKey = candidateKey
             end
           end
         end
       end
     end
-    if bestLocation then return bestLocation end
+    if bestLocation then return bestLocation, bestCandidateKey end
   end
   return nil
 end
@@ -1169,9 +1170,21 @@ function DB:SearchItems(query, filters)
     end
     local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
     if entry then
-      local zoneName = addon.ResolveZoneName and addon:ResolveZoneName(
-        entry.lastMapId, entry.lastContinent, entry.lastZone, entry.lastZoneName
-      ) or entry.lastZoneName
+          local searchLocation = self:GetBestLocationForFingerprint(fingerprint)
+          if (entry.lastSource == "loot-chat" or entry.lastSource == "loot" or entry.lastSource == "loot-opened")
+            and entry.lastMapId and entry.lastX and entry.lastY then
+            searchLocation = {
+              mapId = entry.lastMapId,
+              continent = entry.lastContinent,
+              zone = entry.lastZone,
+              zoneName = entry.lastZoneName,
+              x = entry.lastX,
+              y = entry.lastY,
+            }
+          end
+          local zoneName = searchLocation and addon.ResolveZoneName and addon:ResolveZoneName(
+            searchLocation.mapId, searchLocation.continent, searchLocation.zone, searchLocation.zoneName
+          ) or (searchLocation and searchLocation.zoneName) or entry.lastZoneName
       local upgradeInfo = self:GetUpgradeInfo(itemKey)
       local haystack = string.lower(table.concat({
         bucket.itemName or "",
@@ -1247,13 +1260,29 @@ function DB:SearchItems(query, filters)
       end
 
       if matches then
-        if entry.isWorldforged == true and entry.quality ~= 0 and hasBindOnPickup(entry) and entry.itemLink then
-          local location = self:GetBestLocationForFingerprint(fingerprint)
+          if entry.isWorldforged == true and entry.quality ~= 0 and hasBindOnPickup(entry) and entry.itemLink then
+            local location
+            if (entry.lastSource == "loot-chat" or entry.lastSource == "loot" or entry.lastSource == "loot-opened")
+              and entry.lastMapId and entry.lastX and entry.lastY then
+              location = {
+                mapId = entry.lastMapId,
+                continent = entry.lastContinent,
+                zone = entry.lastZone,
+                zoneName = entry.lastZoneName,
+                x = entry.lastX,
+                y = entry.lastY,
+              }
+            else
+              location = self:GetBestLocationForFingerprint(fingerprint)
+            end
           local upgradeInfo = self:GetUpgradeInfo(itemKey)
           local sourceInfo = self:GetUpgradeSourceInfo(itemKey)
           local sourceLocation, resolvedSourceItemKey = self:GetResolvedSourceLocation(itemKey)
-          local sourceBucket, sourceEntry = self:GetItemEntry(resolvedSourceItemKey)
           local entryIsUpgrade = isUpgradeEntry(entry) or upgradeInfo ~= nil
+          if entryIsUpgrade and not sourceLocation then
+            sourceLocation, resolvedSourceItemKey = self:GetMapLocationForItem(itemKey)
+          end
+          local sourceBucket, sourceEntry = self:GetItemEntry(resolvedSourceItemKey)
           if location and location.mapId and location.x and location.y and not location.zoneName then
             for _, variant in pairs(bucket.variants or {}) do
               local siblingFingerprint = variant and variant.fingerprint

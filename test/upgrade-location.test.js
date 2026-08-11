@@ -36,9 +36,10 @@ test('bundled database snapshots can replace stale shared locations', () => {
   assert.match(core, /Import\(WforgedBundledData, \{ source = "bundled" \}\)/);
 });
 
-test('selected map pin suppresses its duplicate show-all marker', () => {
-  assert.match(mapCore, /local selectedPin = self\.pin and self\.pin:IsShown\(\) and self\.pin\.result/);
-  assert.match(mapCore, /Do not draw the smaller "show all" marker/);
+test('show-all keeps the selected item marker visible', () => {
+  assert.doesNotMatch(mapCore, /local selectedPin = self\.pin and self\.pin:IsShown\(\) and self\.pin\.result/);
+  assert.doesNotMatch(mapCore, /Do not draw the smaller "show all" marker/);
+  assert.match(mapCore, /visible\[key\] = true/);
 });
 
 test('previous-item search makes exact phrase syntax visible', () => {
