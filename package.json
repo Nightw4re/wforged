@@ -10,6 +10,7 @@
     "bundle-data": "luajit scripts/export-bundled-data.lua",
     "copy-local": "node scripts/deploy-addon.js",
     "check": "node scripts/check-addon.js",
+    "lint": "luacheck addon/Wforged --no-global --no-unused --no-max-line-length",
     "build": "node scripts/build-addon.js"
   },
   "keywords": [],
