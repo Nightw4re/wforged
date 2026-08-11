@@ -92,7 +92,8 @@ test('upgrade location repair is queued and processed incrementally', () => {
   assert.match(db, /upgradeLocationRepairQueue/);
   assert.match(db, /function DB:ProcessUpgradeLocationRepair\(limit\)/);
   assert.match(core, /ProcessUpgradeLocationRepair\(1\)/);
-  assert.match(core, /C_Timer\.After\(5, function\(\)/);
+  assert.match(core, /frame\.repairElapsed >= 1\.5/);
+  assert.doesNotMatch(core, /C_Timer\.After\(5, function\(\)/);
 });
 
 test('upgrade repair cache is invalidated when item data changes', () => {

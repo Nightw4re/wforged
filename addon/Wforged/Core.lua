@@ -310,8 +310,16 @@ local function ensureMapPin()
     end)
     WorldMapFrame:HookScript("OnUpdate", function()
       if not WorldMapDetailFrame or not WorldMapFrame:IsShown() then return end
+      -- Zone repair scans stored records. Run it once per map identity, not
+      -- on every frame while the map is open or resized.
       if addon.ItemScan and addon.ItemScan.RepairZoneNamesFromOpenMap then
-        addon.ItemScan:RepairZoneNamesFromOpenMap()
+        local mapId = GetCurrentMapAreaID and GetCurrentMapAreaID() or nil
+        local mapName = GetMapInfo and GetMapInfo() or nil
+        local repairKey = tostring(mapId or "?") .. ":" .. tostring(mapName or "?")
+        if addon.MapNotes.lastOpenMapRepairKey ~= repairKey then
+          addon.MapNotes.lastOpenMapRepairKey = repairKey
+          addon.ItemScan:RepairZoneNamesFromOpenMap()
+        end
       end
       local width = WorldMapDetailFrame:GetWidth()
       local height = WorldMapDetailFrame:GetHeight()
@@ -438,7 +446,18 @@ function addon.MapNotes:EnsureAllMapCheckbox()
   return ensureAllMapCheckbox()
 end
 
-function addon.MapNotes:RefreshAllMarkers()
+function addon.MapNotes:RefreshAllMarkers(force)
+  -- Mapster/ElvUI can emit several size/map events during one zoom step.
+  -- Coalesce them so the expensive item search and pin layout run once.
+  if not force and C_Timer and C_Timer.After then
+    if self.markerRefreshScheduled then return end
+    self.markerRefreshScheduled = true
+    C_Timer.After(0.15, function()
+      self.markerRefreshScheduled = false
+      self:RefreshAllMarkers(true)
+    end)
+    return
+  end
   local checkbox = ensureAllMapCheckbox()
   if checkbox then checkbox:SetChecked(WforgedDB.showAllMapItems and true or false) end
   if not WforgedDB.showAllMapItems or not WorldMapFrame or not WorldMapFrame:IsShown() or not WorldMapDetailFrame then
@@ -446,7 +465,15 @@ function addon.MapNotes:RefreshAllMarkers()
     return
   end
   local visible = {}
-  local results = addon.DB and addon.DB.SearchItems and addon.DB:SearchItems("") or {}
+  -- Reuse the normalized result set during rapid map layout events. Building
+  -- it scans the full database and must not happen on every zoom frame.
+  local now = GetTime and GetTime() or 0
+  if not self.markerResultsCache or not self.markerResultsCacheAt
+    or now - self.markerResultsCacheAt >= 1 then
+    self.markerResultsCache = addon.DB and addon.DB.SearchItems and addon.DB:SearchItems("") or {}
+    self.markerResultsCacheAt = now
+  end
+  local results = self.markerResultsCache
   for _, result in ipairs(results) do
     local currentMapId = GetCurrentMapAreaID and GetCurrentMapAreaID() or nil
     local sameMapId = currentMapId and currentMapId == result.lastMapId

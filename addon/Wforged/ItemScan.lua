@@ -358,6 +358,10 @@ function ItemScan:RepairStoredItem(itemId, entry)
 end
 
 function ItemScan:RepairStoredItems(itemId, limit)
+  if addon.SearchUI and addon.SearchUI.UpdateRepairIndicator then
+    addon.SearchUI:UpdateRepairIndicator()
+  end
+  if addon.Sync and addon.Sync.importActive then return 0 end
   if not addon.DB or not addon.DB.data then
     return 0
   end
@@ -380,6 +384,7 @@ function ItemScan:RepairStoredItems(itemId, limit)
           self.repairQueue[#self.repairQueue + 1] = entry
         end
       end
+      self.repairQueueTotal = #self.repairQueue
       self.repairQueueInitialized = true
     end
   end
@@ -409,6 +414,9 @@ function ItemScan:RepairStoredItems(itemId, limit)
   if repaired > 0 and addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
     addon.MapNotes:RefreshAllMarkers()
   end
+  if addon.SearchUI and addon.SearchUI.UpdateRepairIndicator then
+    addon.SearchUI:UpdateRepairIndicator()
+  end
   return repaired
 end
 
@@ -416,28 +424,38 @@ function ItemScan:GetRepairStatus()
   local pendingItems = addon.DB and addon.DB.GetPendingItems and addon.DB:GetPendingItems() or {}
   local pendingCount = 0
   for _ in pairs(pendingItems or {}) do pendingCount = pendingCount + 1 end
+  local pendingUpgradeLocations = 0
+  if addon.DB and addon.DB.upgradeLocationRepairQueue then
+    pendingUpgradeLocations = #addon.DB.upgradeLocationRepairQueue
+  end
   if self.repairQueue then
     local pending = #self.repairQueue
     if pending > 0 then
-      return "active", pending + pendingCount
+      return "active", pending + pendingCount + pendingUpgradeLocations, self.repairQueueTotal or pending
     end
   end
   if self.zoneRepairQueue then
     local pending = #self.zoneRepairQueue
     if pending > 0 then
-      return "active", pending + pendingCount
+      return "active", pending + pendingCount + pendingUpgradeLocations
     end
   end
   if pendingCount > 0 then
-    return "active", pendingCount
+    return "active", pendingCount + pendingUpgradeLocations
+  end
+  if pendingUpgradeLocations > 0 then
+    return "active", pendingUpgradeLocations
   end
   if self.repairQueueInitialized then
     return "complete", 0
   end
-  return "idle", 0
+  return "idle", 0, self.repairQueueTotal or 0
 end
 
 function ItemScan:RepairStoredZoneNames(limit)
+  if addon.SearchUI and addon.SearchUI.UpdateRepairIndicator then
+    addon.SearchUI:UpdateRepairIndicator()
+  end
   if not addon.DB or not addon.DB.data or not addon.ResolveZoneName then
     return 0
   end
