@@ -133,7 +133,76 @@ function DB:Init()
   self:PurgeUnknownMapLocations()
   self:ClearInventoryLocations()
   self:RestoreDeadminesMapLocation()
+  self:ConsolidateItemIdRecords()
   self:RepairUpgradeLocations()
+end
+
+-- Fingerprint variants were useful while item scaling was being researched,
+-- but the item ID is the stable identity used by the game and by sharing.
+function DB:ConsolidateItemIdRecords()
+  if not self.data or self.data.meta.itemIdConsolidationV1 then return end
+  local groups, changed = {}, 0
+  for fingerprint, entry in pairs(self.data.itemsByFingerprint or {}) do
+    local itemId = tonumber(entry and entry.itemId)
+    if itemId then
+      groups[itemId] = groups[itemId] or {}
+      groups[itemId][#groups[itemId] + 1] = { fingerprint = fingerprint, entry = entry }
+    end
+  end
+
+  for itemId, records in pairs(groups) do
+    if #records > 1 then
+      table.sort(records, function(a, b)
+        return tonumber(a.entry.lastSeenAt or a.entry.firstSeenAt or 0) > tonumber(b.entry.lastSeenAt or b.entry.firstSeenAt or 0)
+      end)
+      local winner = records[1]
+      local target = winner.entry
+      local locationSource
+      for _, record in ipairs(records) do
+        local candidate = record.entry
+        if candidate.lastMapId and candidate.lastX and candidate.lastY
+          and (not locationSource or tonumber(candidate.lastSeenAt or 0) > tonumber(locationSource.lastSeenAt or 0)) then
+          locationSource = candidate
+        end
+        if not target.upgradeCost and candidate.upgradeCost then target.upgradeCost = candidate.upgradeCost end
+        if not target.upgradeCurrency and candidate.upgradeCurrency then target.upgradeCurrency = candidate.upgradeCurrency end
+        if not target.lastZoneName and candidate.lastZoneName then target.lastZoneName = candidate.lastZoneName end
+      end
+      if locationSource and not (target.lastMapId and target.lastX and target.lastY) then
+        for _, field in ipairs({ "lastMapId", "lastContinent", "lastZone", "lastZoneName", "lastX", "lastY" }) do
+          target[field] = locationSource[field]
+        end
+      end
+      target.itemId = itemId
+      local winnerKey = winner.fingerprint
+      local winnerPoints = self.data.spawnPointsByItem[winnerKey] or {}
+      for index = 2, #records do
+        local duplicate = records[index]
+        local points = self.data.spawnPointsByItem[duplicate.fingerprint]
+        if points then
+          for pointKey, point in pairs(points) do winnerPoints[pointKey] = point end
+        end
+        self.data.spawnPointsByItem[duplicate.fingerprint] = nil
+        self.data.itemsByFingerprint[duplicate.fingerprint] = nil
+        changed = changed + 1
+      end
+      self.data.spawnPointsByItem[winnerKey] = winnerPoints
+      for itemKey, bucket in pairs(self.data.itemsByKey or {}) do
+        local kept = bucket.itemId == itemId and winnerKey or nil
+        if kept then
+          bucket.bestFingerprint = winnerKey
+          bucket.variants = { [self:BuildVariantKey(target)] = { fingerprint = winnerKey, effectiveLevel = target.effectiveLevel, upgradeLevel = target.upgradeLevel, statsText = target.statsText, lastSeenAt = target.lastSeenAt } }
+          bucket.variantCount = 1
+        else
+          for variantKey, variant in pairs(bucket.variants or {}) do
+            if variant and variant.fingerprint and not self.data.itemsByFingerprint[variant.fingerprint] then bucket.variants[variantKey] = nil end
+          end
+        end
+      end
+    end
+  end
+  self.data.meta.itemIdConsolidationV1 = true
+  if changed > 0 and addon.LootDebug then addon:LootDebug(string.format("Item ID consolidation complete: removed %d duplicate records.", changed)) end
 end
 
 function DB:CleanupMalformedImportedLocations()
@@ -1129,8 +1198,26 @@ function DB:SearchItems(query, filters)
       end
 
       if matches then
-        if entry.isWorldforged == true and entry.quality ~= 0 and hasBindOnPickup(entry) and entry.itemLink then
-          local location = self:GetBestLocationForFingerprint(fingerprint)
+          local sharedSource = entry.lastSource == "import"
+            or entry.lastSource == "party"
+            or entry.lastSource == "guild"
+            or entry.lastSource == "manual"
+          if entry.isWorldforged == true and entry.quality ~= 0
+            and (hasBindOnPickup(entry) or sharedSource) and entry.itemLink then
+            local location
+            if (entry.lastSource == "loot-chat" or entry.lastSource == "loot" or entry.lastSource == "loot-opened")
+              and entry.lastMapId and entry.lastX and entry.lastY then
+              location = {
+                mapId = entry.lastMapId,
+                continent = entry.lastContinent,
+                zone = entry.lastZone,
+                zoneName = entry.lastZoneName,
+                x = entry.lastX,
+                y = entry.lastY,
+              }
+            else
+              location = self:GetBestLocationForFingerprint(fingerprint)
+            end
           local upgradeInfo = self:GetUpgradeInfo(itemKey)
           local sourceInfo = self:GetUpgradeSourceInfo(itemKey)
           local sourceLocation, resolvedSourceItemKey = self:GetResolvedSourceLocation(itemKey)

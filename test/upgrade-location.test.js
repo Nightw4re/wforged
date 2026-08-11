@@ -23,6 +23,53 @@ test('vendor coordinates are rejected as item locations', () => {
   assert.match(db, /function DB:IsVendorLocation/);
   assert.match(db, /not self:IsVendorLocation\(point\.mapId, point\.x, point\.y\)/);
   assert.match(db, /source == "merchant"/);
+  assert.match(db, /not isLocationlessSource\(payload\.sourceType\)/);
+  assert.match(scan, /record\.sourceType ~= "upgrade-frame"/);
+});
+
+test('bundled database snapshots can replace stale shared locations', () => {
+  assert.match(sync, /sourceType = fields\.importSource or "import"/);
+  assert.match(sync, /local bundledSource = payload\.sourceType == "bundled"/);
+  assert.match(sync, /bundledSource or \(not existing\)/);
+  assert.match(core, /Import\(WforgedBundledData, \{ source = "bundled" \}\)/);
+});
+
+test('show-all keeps the selected item marker visible', () => {
+  assert.doesNotMatch(mapCore, /local selectedPin = self\.pin and self\.pin:IsShown\(\) and self\.pin\.result/);
+  assert.doesNotMatch(mapCore, /Do not draw the smaller "show all" marker/);
+  assert.match(mapCore, /visible\[key\] = true/);
+});
+
+test('show-all excludes upgrade markers', () => {
+  assert.match(mapCore, /local isUpgradeResult = result\.isUpgrade == true/);
+  assert.match(mapCore, /if not isUpgradeResult and result\.lastX and result\.lastY/);
+});
+
+test('open-map zone repair is cached per map', () => {
+  assert.match(scan, /openMapRepairCompletedKey == mapPreviewKey/);
+  assert.match(scan, /openMapRepairCompletedKey = mapPreviewKey/);
+});
+
+test('guild imports remain searchable while item metadata loads', () => {
+  assert.match(sync, /self:Import\(message, \{ source = "guild" \}\)/);
+  assert.match(db, /local sharedSource = entry\.lastSource == "import"/);
+  assert.match(db, /\(hasBindOnPickup\(entry\) or sharedSource\)/);
+});
+
+test('database consolidates duplicate fingerprints by item id once', () => {
+  assert.match(db, /itemIdConsolidationV1/);
+  assert.match(db, /ConsolidateItemIdRecords/);
+  assert.match(db, /removed %d duplicate records/);
+  assert.match(db, /self\.data\.itemsByFingerprint\[duplicate\.fingerprint\] = nil/);
+});
+
+test('upgrade repair waits 30 seconds after login', () => {
+  assert.match(core, /C_Timer\.After\(30, function\(\)/);
+});
+
+test('previous-item search makes exact phrase syntax visible', () => {
+  assert.match(ui, /quotedSourceName = sourceName and \('\"' \.\. tostring\(sourceName\)/);
+  assert.match(ui, /SetText\(quotedSourceName\)/);
 });
 
 test('preferred fingerprint can select a located imported variant', () => {

@@ -587,7 +587,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
   end
 
   if message and (message:sub(1, 7) == "WFGDB7|" or message:sub(1, 7) == "WFGDB8|") then
-    self:Import(message)
+    self:Import(message, { source = "guild" })
     addon:LootDebug("Guild payload queued as WFGDB7.")
   elseif message and message:sub(1, 5) == "WFG6|" then
     local fields = splitPayload(message)

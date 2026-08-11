@@ -439,7 +439,7 @@ registerEvent("PLAYER_LOGIN", function(self)
     end)
   end
   if C_Timer and C_Timer.After and self.DB and self.DB.upgradeLocationRepairQueue then
-    C_Timer.After(5, function()
+    C_Timer.After(30, function()
       self.DB.upgradeLocationRepairReady = true
       self:LootDebug("Upgrade location repair started after login delay.")
     end)
