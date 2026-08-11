@@ -87,7 +87,7 @@ local function createFilter(parent, kind, x, y)
       for _, value in ipairs(filterOptions[kind]) do
         local info = UIDropDownMenu_CreateInfo()
         local label = filterLabel(value, kind)
-        info.text = label
+        info.text = value == "" and "|cff888888" .. label .. "|r" or label
         info.checked = self.value == value
         info.func = function()
           self.value = value
@@ -336,7 +336,18 @@ end
 local function buildUpgradeShareText(result)
   local source = findSourceResult(result)
   if not source then return buildShareText(result) end
-  return buildShareText(result) .. " | Base: " .. buildShareText(source)
+  local zoneName = getLocationText(source)
+  if zoneName == "-" or zoneName == "unknown zone" then
+    return buildChatItemLink(result) .. " found in unknown zone as " .. buildChatItemLink(source)
+  end
+  local coords = ""
+  if source.lastX and source.lastY then
+    coords = string.format(" @ %.1f, %.1f", source.lastX * 100, source.lastY * 100)
+  end
+  return string.format(
+    "Wforged Addon: %s found in %s as %s%s",
+    buildChatItemLink(result), zoneName, buildChatItemLink(source), coords
+  )
 end
 
 local function quotedFilterStats(text)
@@ -480,19 +491,19 @@ local function createRow(parent, index)
   row.shareButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   row.shareButton:SetWidth(44)
   row.shareButton:SetHeight(22)
-  row.shareButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+  row.shareButton:SetPoint("LEFT", row, "LEFT", 676, 0)
   row.shareButton:SetText("Share")
 
   row.showMapButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   row.showMapButton:SetWidth(36)
   row.showMapButton:SetHeight(20)
-  row.showMapButton:SetPoint("LEFT", row.shareButton, "RIGHT", 6, 0)
+  row.showMapButton:SetPoint("LEFT", row, "LEFT", 726, 0)
   row.showMapButton:SetText("Map")
 
   row.findButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
   row.findButton:SetWidth(22)
   row.findButton:SetHeight(22)
-  row.findButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+  row.findButton:SetPoint("LEFT", row, "LEFT", 776, 0)
   row.findButton:SetText("")
   row.findButton.icon = row.findButton:CreateTexture(nil, "ARTWORK")
   row.findButton.icon:SetSize(14, 14)
@@ -527,7 +538,7 @@ local function createTableHeader(parent, text, key, x, width)
       SearchUI.sortAscending = not SearchUI.sortAscending
     else
       SearchUI.sortKey = key
-      SearchUI.sortAscending = true
+      SearchUI.sortAscending = key ~= "quality"
     end
     SearchUI.page = 1
     SearchUI:UpdateHeaderSortState()
@@ -593,8 +604,8 @@ function SearchUI:UpdateDynamicColumns(query)
   end
   for index, header in ipairs(frame.statHeaders or {}) do
     local active = statNames[index]
-    header.label = active or ""
-    header:SetText(active and getStatAbbreviation(active) or "")
+    header.label = active and getStatAbbreviation(active) or ""
+    header:SetText(header.label)
     header:SetShown(active ~= nil)
     if active then
       header:SetPoint("TOPLEFT", baseX + ((index - 1) * statWidth), 0)
@@ -603,7 +614,8 @@ function SearchUI:UpdateDynamicColumns(query)
   end
   local locationX = baseX + (#statNames * statWidth)
   if #statNames == 0 then locationX = 405 end
-  local locationWidth = math.max(180, 668 - locationX)
+  local actionX = 676
+  local locationWidth = math.max(120, actionX - locationX - 8)
   frame.locationHeader:SetPoint("TOPLEFT", locationX, 0)
   frame.locationHeader:SetWidth(locationWidth)
   for _, row in ipairs(self.rows or {}) do
@@ -902,13 +914,13 @@ function SearchUI:Refresh(query)
       if isUpgrade then
         row.locationText:SetText(upgradeText or "unknown cost")
         row.locationText:SetJustifyH("RIGHT")
-        row.locationText:SetWidth(245)
+        row.locationText:SetWidth(self.frame.locationHeader:GetWidth())
         row.shareButton:ClearAllPoints()
-        row.shareButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+        row.shareButton:SetPoint("LEFT", row, "LEFT", 676, 0)
         row.showMapButton:ClearAllPoints()
-        row.showMapButton:SetPoint("LEFT", row.shareButton, "RIGHT", 6, 0)
+        row.showMapButton:SetPoint("LEFT", row, "LEFT", 726, 0)
         row.findButton:ClearAllPoints()
-        row.findButton:SetPoint("LEFT", row.showMapButton, "RIGHT", 6, 0)
+        row.findButton:SetPoint("LEFT", row, "LEFT", 776, 0)
         if result.upgradeCurrency == "rune" and GetItemIcon then
           local currencyId = 375250
           row.currencyButton.texture:SetTexture(GetItemIcon(currencyId) or "Interface\\Icons\\INV_Misc_QuestionMark")
@@ -932,7 +944,7 @@ function SearchUI:Refresh(query)
         row.locationText:SetJustifyH("LEFT")
         row.locationText:SetWidth(263)
         row.findButton:ClearAllPoints()
-        row.findButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+        row.findButton:SetPoint("LEFT", row, "LEFT", 776, 0)
         row.currencyButton:Hide()
       end
       if isUpgrade then
@@ -956,9 +968,9 @@ function SearchUI:Refresh(query)
         row.showMapButton:Show()
       elseif canShareLocation then
         row.shareButton:ClearAllPoints()
-        row.shareButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+        row.shareButton:SetPoint("LEFT", row, "LEFT", 676, 0)
         row.showMapButton:ClearAllPoints()
-        row.showMapButton:SetPoint("LEFT", row.shareButton, "RIGHT", 6, 0)
+        row.showMapButton:SetPoint("LEFT", row, "LEFT", 726, 0)
         row.shareButton:SetScript("OnClick", function()
           openChatWithText(buildShareText(result))
         end)
