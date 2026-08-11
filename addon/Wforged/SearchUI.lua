@@ -32,6 +32,7 @@ local function filterLabel(value, kind)
     if kind == "armorType" then return "Any armor type" end
     if kind == "quality" then return "Any quality" end
     if kind == "variant" then return "All item types" end
+    if kind:match("^stat%d$") then return "Any stat" end
     return "Any " .. kind
   end
   if value == "base" then return "Base items" end
@@ -85,7 +86,8 @@ local function createFilter(parent, kind, x, y)
     UIDropDownMenu_Initialize(menu, function(_, level)
       for _, value in ipairs(filterOptions[kind]) do
         local info = UIDropDownMenu_CreateInfo()
-        info.text = filterLabel(value, kind)
+        local label = filterLabel(value, kind)
+        info.text = label
         info.checked = self.value == value
         info.func = function()
           self.value = value
