@@ -18,8 +18,10 @@ local filterOptions = {
   weaponType = {"", "Axe", "Bow", "Crossbow", "Dagger", "Fist", "Gun", "Mace", "Polearm", "Shield", "Staff", "Sword", "Two-Handed Axe", "Two-Handed Sword", "Two-Handed Mace", "Wand"},
   quality = {"", "Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary"},
   variant = {"", "base", "upgrade", "equipment", "bags", "food", "other"},
-  stat1 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Crit", "Haste", "Mastery", "Versatility", "Spell Power"},
-  stat2 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Crit", "Haste", "Mastery", "Versatility", "Spell Power"},
+  stat1 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Critical Strike", "Hit Rating", "Expertise", "Haste Rating", "Spell Power", "Attack Power"},
+  stat2 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Critical Strike", "Hit Rating", "Expertise", "Haste Rating", "Spell Power", "Attack Power"},
+  stat3 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Critical Strike", "Hit Rating", "Expertise", "Haste Rating", "Spell Power", "Attack Power"},
+  stat4 = {"", "Strength", "Agility", "Intellect", "Spirit", "Stamina", "Critical Strike", "Hit Rating", "Expertise", "Haste Rating", "Spell Power", "Attack Power"},
   level = {"", "base", "upgrade", "10", "20", "30", "40", "50", "60"},
 }
 
@@ -308,6 +310,94 @@ local function getQualityName(quality)
   return ({ [0] = "Poor", [1] = "Common", [2] = "Uncommon", [3] = "Rare", [4] = "Epic", [5] = "Legendary" })[tonumber(quality)] or "-"
 end
 
+local function findSourceResult(result)
+  if not result or not addon.DB or not addon.DB.SearchItems then return nil end
+  local sourceKey = result.sourceItemKey or result.resolvedSourceItemKey
+  local sourceId = result.sourceItemId
+  local sourceName = result.sourceItemName or result.resolvedSourceItemName
+  local candidates = addon.DB:SearchItems(sourceName or "", {})
+  local best
+  for _, candidate in ipairs(candidates or {}) do
+    local keyMatch = sourceKey and candidate.itemKey == sourceKey
+    local idMatch = sourceId and tonumber(candidate.itemId) == tonumber(sourceId)
+    local nameMatch = sourceName and string.lower(candidate.itemName or "") == string.lower(sourceName)
+    if keyMatch or idMatch or nameMatch then
+      local candidateUpgrade = candidate.isUpgrade == true or candidate.upgradeCost ~= nil
+      if not candidateUpgrade and (not best or (candidate.itemLevel or 0) < (best.itemLevel or 0)) then
+        best = candidate
+      end
+    end
+  end
+  return best
+end
+
+local function buildUpgradeShareText(result)
+  local source = findSourceResult(result)
+  if not source then return buildShareText(result) end
+  return buildShareText(result) .. " | Base: " .. buildShareText(source)
+end
+
+local function quotedFilterStats(text)
+  local found = {}
+  local known = {}
+  for _, value in ipairs(filterOptions.stat1) do
+    if value ~= "" then known[string.lower(value)] = value end
+  end
+  local cleaned = tostring(text or ""):gsub('"([^"]+)"', function(value)
+    local stat = known[string.lower(value)]
+    if stat and #found < 4 then
+      found[#found + 1] = stat
+      return ""
+    end
+    return '"' .. value .. '"'
+  end)
+  return cleaned:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""), found
+end
+
+local function getQuotedStatNames(query)
+  local stats = {}
+  local known = {
+    ["strength"] = true, ["agility"] = true, ["stamina"] = true,
+    ["intellect"] = true, ["spirit"] = true, ["critical strike"] = true,
+    ["hit rating"] = true, ["expertise"] = true, ["haste rating"] = true, ["spell power"] = true,
+    ["attack power"] = true, ["armor penetration"] = true,
+    ["fire resistance"] = true, ["frost resistance"] = true,
+    ["nature resistance"] = true, ["shadow resistance"] = true,
+  }
+  for phrase in string.lower(tostring(query or "")):gmatch('"([^"]+)"') do
+    if known[phrase] and #stats < 4 then stats[#stats + 1] = phrase end
+  end
+  return stats
+end
+
+local function getStatValue(result, statName)
+  local text = string.lower(tostring(result.statsText or "") .. " | " .. tostring(result.tooltipText or ""))
+  local escaped = statName:gsub("%W", "%%%0")
+  local value = text:match("([%+%-]?%d+)%s+" .. escaped)
+  return value and tostring(tonumber(value) or value) or "-"
+end
+
+local function getStatAbbreviation(statName)
+  return ({
+    ["strength"] = "STR",
+    ["agility"] = "AGI",
+    ["stamina"] = "STA",
+    ["intellect"] = "INT",
+    ["spirit"] = "SPI",
+    ["critical strike"] = "CRIT",
+    ["hit rating"] = "HIT",
+    ["expertise"] = "EXP",
+    ["haste rating"] = "HASTE",
+    ["spell power"] = "SP",
+    ["attack power"] = "AP",
+    ["armor penetration"] = "ARP",
+    ["fire resistance"] = "FR",
+    ["frost resistance"] = "FROST",
+    ["nature resistance"] = "NR",
+    ["shadow resistance"] = "SR",
+  })[string.lower(statName or "")] or statName
+end
+
 local function isForeignRealm(result)
   local current = addon.DB and addon.DB.GetCurrentRealm and addon.DB:GetCurrentRealm() or "Unknown"
   return result and result.realm and result.realm ~= "Unknown" and result.realm ~= current
@@ -347,6 +437,14 @@ local function createRow(parent, index)
   row.qualityText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   row.qualityText:SetPoint("LEFT", 320, 0)
   row.qualityText:SetWidth(85)
+  row.statTexts = {}
+  for statIndex = 1, 4 do
+    local statText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    statText:SetWidth(80)
+    statText:SetJustifyH("RIGHT")
+    statText:Hide()
+    row.statTexts[statIndex] = statText
+  end
   row.locationText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
   row.locationText:SetPoint("LEFT", 405, 0)
   row.locationText:SetWidth(263)
@@ -473,28 +571,66 @@ function SearchUI:UpdateHeaderSortState()
   end
 end
 
+function SearchUI:UpdateDynamicColumns(query)
+  local frame = self.frame
+  if not frame or not frame.headers then return end
+  local statNames = {}
+  for index = 1, 4 do
+    local selected = self.filters and self.filters["stat" .. index]
+    if selected and selected ~= "" then statNames[#statNames + 1] = string.lower(selected) end
+  end
+  for _, quoted in ipairs(getQuotedStatNames(query)) do
+    if #statNames >= 4 then break end
+    statNames[#statNames + 1] = quoted
+  end
+  local baseX = 320
+  local statWidth = 55
+  local qualityHeader = frame.qualityHeader
+  if qualityHeader then
+    qualityHeader:SetShown(#statNames == 0)
+  end
+  for index, header in ipairs(frame.statHeaders or {}) do
+    local active = statNames[index]
+    header.label = active or ""
+    header:SetText(active and getStatAbbreviation(active) or "")
+    header:SetShown(active ~= nil)
+    if active then
+      header:SetPoint("TOPLEFT", baseX + ((index - 1) * statWidth), 0)
+      header:SetWidth(statWidth)
+    end
+  end
+  local locationX = baseX + (#statNames * statWidth)
+  if #statNames == 0 then locationX = 405 end
+  local locationWidth = math.max(180, 668 - locationX)
+  frame.locationHeader:SetPoint("TOPLEFT", locationX, 0)
+  frame.locationHeader:SetWidth(locationWidth)
+  for _, row in ipairs(self.rows or {}) do
+    row.locationText:SetPoint("LEFT", row, "LEFT", locationX, 0)
+    row.locationText:SetWidth(locationWidth)
+    row.qualityText:SetShown(#statNames == 0)
+    for index, statText in ipairs(row.statTexts or {}) do
+      if statNames[index] then
+        statText:SetText("")
+        statText:SetWidth(statWidth)
+        statText:SetPoint("LEFT", row, "LEFT", baseX + ((index - 1) * statWidth), 0)
+        statText:Show()
+      else
+        statText:Hide()
+      end
+    end
+  end
+  frame.dynamicStatNames = statNames
+end
+
 function SearchUI:UpdateRepairIndicator()
   local indicator = self.frame and self.frame.repairIndicator
   if not indicator then return end
-  if addon.Sync and addon.Sync.importActive then
-    local processed = addon.Sync.importProcessed or 0
-    local total = addon.Sync.importTotal or 0
-    indicator:SetText(string.format("Processing %d/%d items...", processed, total))
-    indicator:SetTextColor(1, 0.82, 0, 1)
-    indicator:Show()
-    return
-  end
-  local state, pending, total = "idle", 0, 0
+  local state, pending = "idle", 0
   if addon.ItemScan and addon.ItemScan.GetRepairStatus then
-    state, pending, total = addon.ItemScan:GetRepairStatus()
+    state, pending = addon.ItemScan:GetRepairStatus()
   end
   if state == "active" then
-    if total and total > 0 and addon.ItemScan and addon.ItemScan.repairQueue then
-      local processed = total - #addon.ItemScan.repairQueue
-      indicator:SetText(string.format("Processing %d/%d items...", processed, total))
-    else
-      indicator:SetText(string.format("Processing %d items...", pending))
-    end
+    indicator:SetText(string.format("Loading item data... %d remaining", pending))
     indicator:SetTextColor(1, 0.82, 0, 1)
     indicator:Show()
   else
@@ -594,8 +730,9 @@ function SearchUI:SearchForSource(result)
     button.value = ""
     button:SetText(filterLabel("", kind))
   end
-  self.frame.editBox:SetText(sourceName or "")
-  self:Refresh(sourceName or "")
+  local quotedSourceName = sourceName and ('"' .. tostring(sourceName):gsub('"', '') .. '"') or ""
+  self.frame.editBox:SetText(quotedSourceName)
+  self:Refresh(quotedSourceName)
   local targetLevel = tonumber(result.itemLevel or result.effectiveLevel or 0) or 0
   local bestPrevious
   local directPrevious
@@ -629,7 +766,6 @@ function SearchUI:SetSelectedResult(result)
 end
 
 function SearchUI:Refresh(query)
-  self:UpdateRepairIndicator()
   self:UpdateDynamicColumns(query or (self.frame and self.frame.editBox and self.frame.editBox:GetText()) or "")
   if not self.rows then
     return
@@ -664,6 +800,10 @@ function SearchUI:Refresh(query)
       value = isUpgrade and safeSortNumber(result.upgradeCost, -1) or location
     elseif key == "upgrade" then
       value = safeSortNumber(result.upgradeLevel)
+    elseif key:match("^stat%d$") then
+      local statIndex = tonumber(key:match("%d+"))
+      local statName = self.frame and self.frame.dynamicStatNames and self.frame.dynamicStatNames[statIndex]
+      value = statName and safeSortNumber(getStatValue(result, statName), -1) or -1
     else
       value = string.lower(tostring(result.itemName or ""))
     end
@@ -738,6 +878,11 @@ function SearchUI:Refresh(query)
       row.icon:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
       row.levelText:SetText(metadataPending and "-" or tostring(result.itemLevel or 0))
       row.qualityText:SetText(metadataPending and "-" or getQualityName(result.quality))
+      for statIndex, statName in ipairs(self.frame.dynamicStatNames or {}) do
+        if row.statTexts and row.statTexts[statIndex] then
+          row.statTexts[statIndex]:SetText(getStatValue(result, statName))
+        end
+      end
       local isUpgrade = result.isUpgrade == true
         or (tonumber(result.upgradeLevel or 0) or 0) > 0
         or result.upgradeCost ~= nil
@@ -756,8 +901,12 @@ function SearchUI:Refresh(query)
         row.locationText:SetText(upgradeText or "unknown cost")
         row.locationText:SetJustifyH("RIGHT")
         row.locationText:SetWidth(245)
+        row.shareButton:ClearAllPoints()
+        row.shareButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+        row.showMapButton:ClearAllPoints()
+        row.showMapButton:SetPoint("LEFT", row.shareButton, "RIGHT", 6, 0)
         row.findButton:ClearAllPoints()
-        row.findButton:SetPoint("LEFT", row.locationText, "RIGHT", 26, 0)
+        row.findButton:SetPoint("LEFT", row.showMapButton, "RIGHT", 6, 0)
         if result.upgradeCurrency == "rune" and GetItemIcon then
           local currencyId = 375250
           row.currencyButton.texture:SetTexture(GetItemIcon(currencyId) or "Interface\\Icons\\INV_Misc_QuestionMark")
@@ -790,7 +939,24 @@ function SearchUI:Refresh(query)
         end)
         row.findButton:SetText("")
         row.findButton:Show()
+        row.shareButton:SetScript("OnClick", function()
+          openChatWithText(buildUpgradeShareText(result))
+        end)
+        row.showMapButton:SetScript("OnClick", function()
+          local source = findSourceResult(result)
+          if source and addon.MapNotes then
+            addon.MapNotes:ShowOnMap(source, true)
+          end
+        end)
+        row.shareButton:SetText("Share")
+        row.showMapButton:SetText("Map")
+        row.shareButton:Show()
+        row.showMapButton:Show()
       elseif canShareLocation then
+        row.shareButton:ClearAllPoints()
+        row.shareButton:SetPoint("LEFT", row.locationText, "RIGHT", 8, 0)
+        row.showMapButton:ClearAllPoints()
+        row.showMapButton:SetPoint("LEFT", row.shareButton, "RIGHT", 6, 0)
         row.shareButton:SetScript("OnClick", function()
           openChatWithText(buildShareText(result))
         end)
@@ -881,17 +1047,6 @@ function SearchUI:Toggle()
     frame:SetPoint(state.point or "CENTER", UIParent, state.relativePoint or "CENTER", state.x or 0, state.y or 0)
     frame:SetMovable(true)
     frame:EnableMouse(true)
-    frame:SetScript("OnMouseDown", function()
-      closeFilterDropdown()
-    end)
-    frame.repairIndicatorElapsed = 0
-    frame:SetScript("OnUpdate", function(self, elapsed)
-      self.repairIndicatorElapsed = (self.repairIndicatorElapsed or 0) + elapsed
-      if self.repairIndicatorElapsed >= 0.5 then
-        self.repairIndicatorElapsed = 0
-        SearchUI:UpdateRepairIndicator()
-      end
-    end)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
@@ -946,10 +1101,32 @@ function SearchUI:Toggle()
     editBox:SetScript("OnEscapePressed", function()
       editBox:ClearFocus()
     end)
+    editBox:SetScript("OnMouseUp", function(box, button)
+      if button == "RightButton" then
+        box:SetText("")
+        box:ClearFocus()
+      end
+    end)
     editBox:SetScript("OnTextChanged", function(box)
       if not SearchUI.suppressRefresh then
+        local cleaned, statValues = quotedFilterStats(box:GetText())
+        if #statValues > 0 then
+          SearchUI.suppressRefresh = true
+          for index, statValue in ipairs(statValues) do
+            local kind = "stat" .. index
+            SearchUI.filters[kind] = statValue
+            local button = frame.filters and frame.filters[kind]
+            if button then
+              button.value = statValue
+              button:SetText(filterLabel(statValue, kind))
+              updateFilterVisual(button)
+            end
+          end
+          box:SetText(cleaned)
+          SearchUI.suppressRefresh = false
+        end
         SearchUI.page = 1
-        SearchUI:Refresh(box:GetText())
+        SearchUI:Refresh(cleaned or box:GetText())
       end
     end)
     frame.editBox = editBox
@@ -966,7 +1143,7 @@ function SearchUI:Toggle()
 
     self.filters = {}
     frame.filters = {}
-    local filterKinds = {"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "level", "variant"}
+    local filterKinds = {"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "stat3", "stat4", "level", "variant"}
     for index, kind in ipairs(filterKinds) do
       local filterRow = index <= 4 and 0 or 1
       local filterColumn = (index - 1) % 4
@@ -987,10 +1164,7 @@ function SearchUI:Toggle()
     hint:SetText("Search by name, stats, level, or upgrade.")
     frame.repairIndicator = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.repairIndicator:SetPoint("LEFT", hint, "RIGHT", 12, 0)
-    frame.repairIndicator:SetWidth(280)
-    if frame.repairIndicator.SetNonSpaceWrap then
-      frame.repairIndicator:SetNonSpaceWrap(false)
-    end
+    frame.repairIndicator:SetWidth(190)
     frame.repairIndicator:SetJustifyH("LEFT")
     frame.repairIndicator:Hide()
 
@@ -1344,6 +1518,14 @@ function SearchUI:Toggle()
       createTableHeader(headerFrame, "Quality", "quality", 320, 85),
       createTableHeader(headerFrame, "Location/Price", "location", 405, 263),
     }
+    frame.qualityHeader = frame.headers[3]
+    frame.locationHeader = frame.headers[4]
+    frame.statHeaders = {}
+    for index = 1, 4 do
+      frame.statHeaders[index] = createTableHeader(headerFrame, "", "stat" .. index, 320 + ((index - 1) * 80), 80)
+      frame.headers[#frame.headers + 1] = frame.statHeaders[index]
+    end
+    for _, header in ipairs(frame.statHeaders) do header:Hide() end
     self:UpdateHeaderSortState()
 
     local content = CreateFrame("Frame", nil, scroll)
