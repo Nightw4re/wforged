@@ -433,10 +433,13 @@ registerEvent("PLAYER_LOGIN", function(self)
   else
     self:LootDebug("AutoConfirm module missing.")
   end
-  -- Do not start a full metadata scan during login. Tooltip queries are
-  -- synchronous on this client and can cause a visible hitch.
+  if C_Timer and C_Timer.After and self.ItemScan and self.ItemScan.RepairStoredItems then
+    C_Timer.After(5, function()
+      self.ItemScan:RepairStoredItems(nil, 1)
+    end)
+  end
   if C_Timer and C_Timer.After and self.DB and self.DB.upgradeLocationRepairQueue then
-    C_Timer.After(30, function()
+    C_Timer.After(15, function()
       self.DB.upgradeLocationRepairReady = true
       self:LootDebug("Upgrade location repair started after login delay.")
     end)
@@ -445,24 +448,16 @@ registerEvent("PLAYER_LOGIN", function(self)
     frame.elapsed = (frame.elapsed or 0) + elapsed
     frame.pendingElapsed = (frame.pendingElapsed or 0) + elapsed
     frame.vendorElapsed = (frame.vendorElapsed or 0) + elapsed
-    frame.repairElapsed = (frame.repairElapsed or 0) + elapsed
     if frame.elapsed >= 0.2 then
       frame.elapsed = 0
       if self.AutoConfirm and self.AutoConfirm.TryConfirm then
         self.AutoConfirm:TryConfirm()
       end
-      if frame.repairElapsed >= 1.5 then
-        frame.repairElapsed = 0
-        -- Metadata repair is only useful while the search view is open. This
-        -- keeps login, travel and combat free of background tooltip scans.
-        if self.SearchUI and self.SearchUI.frame and self.SearchUI.frame:IsShown()
-          and self.ItemScan and self.ItemScan.RepairStoredItems then
-          self.ItemScan:RepairStoredItems(nil, 1)
-        end
-        if self.DB and self.DB.ProcessUpgradeLocationRepair
-          and self.DB.upgradeLocationRepairReady then
-          self.DB:ProcessUpgradeLocationRepair(1)
-        end
+      if self.ItemScan and self.ItemScan.repairQueue and self.ItemScan.RepairStoredItems then
+        local repaired = self.ItemScan:RepairStoredItems(nil, 1)
+      end
+      if self.DB and self.DB.ProcessUpgradeLocationRepair then
+        self.DB:ProcessUpgradeLocationRepair(1)
       end
       if frame.pendingElapsed >= 1 and self.ItemScan and self.ItemScan.RetryPendingItems then
         frame.pendingElapsed = 0

@@ -165,76 +165,7 @@ function DB:Init()
   self:PurgeUnknownMapLocations()
   self:ClearInventoryLocations()
   self:RestoreDeadminesMapLocation()
-  self:ConsolidateItemIdRecords()
   self:RepairUpgradeLocations()
-end
-
--- Fingerprint variants were useful while item scaling was being researched,
--- but the item ID is the stable identity used by the game and by sharing.
-function DB:ConsolidateItemIdRecords()
-  if not self.data or self.data.meta.itemIdConsolidationV1 then return end
-  local groups, changed = {}, 0
-  for fingerprint, entry in pairs(self.data.itemsByFingerprint or {}) do
-    local itemId = tonumber(entry and entry.itemId)
-    if itemId then
-      groups[itemId] = groups[itemId] or {}
-      groups[itemId][#groups[itemId] + 1] = { fingerprint = fingerprint, entry = entry }
-    end
-  end
-
-  for itemId, records in pairs(groups) do
-    if #records > 1 then
-      table.sort(records, function(a, b)
-        return tonumber(a.entry.lastSeenAt or a.entry.firstSeenAt or 0) > tonumber(b.entry.lastSeenAt or b.entry.firstSeenAt or 0)
-      end)
-      local winner = records[1]
-      local target = winner.entry
-      local locationSource
-      for _, record in ipairs(records) do
-        local candidate = record.entry
-        if candidate.lastMapId and candidate.lastX and candidate.lastY
-          and (not locationSource or tonumber(candidate.lastSeenAt or 0) > tonumber(locationSource.lastSeenAt or 0)) then
-          locationSource = candidate
-        end
-        if not target.upgradeCost and candidate.upgradeCost then target.upgradeCost = candidate.upgradeCost end
-        if not target.upgradeCurrency and candidate.upgradeCurrency then target.upgradeCurrency = candidate.upgradeCurrency end
-        if not target.lastZoneName and candidate.lastZoneName then target.lastZoneName = candidate.lastZoneName end
-      end
-      if locationSource and not (target.lastMapId and target.lastX and target.lastY) then
-        for _, field in ipairs({ "lastMapId", "lastContinent", "lastZone", "lastZoneName", "lastX", "lastY" }) do
-          target[field] = locationSource[field]
-        end
-      end
-      target.itemId = itemId
-      local winnerKey = winner.fingerprint
-      local winnerPoints = self.data.spawnPointsByItem[winnerKey] or {}
-      for index = 2, #records do
-        local duplicate = records[index]
-        local points = self.data.spawnPointsByItem[duplicate.fingerprint]
-        if points then
-          for pointKey, point in pairs(points) do winnerPoints[pointKey] = point end
-        end
-        self.data.spawnPointsByItem[duplicate.fingerprint] = nil
-        self.data.itemsByFingerprint[duplicate.fingerprint] = nil
-        changed = changed + 1
-      end
-      self.data.spawnPointsByItem[winnerKey] = winnerPoints
-      for itemKey, bucket in pairs(self.data.itemsByKey or {}) do
-        local kept = bucket.itemId == itemId and winnerKey or nil
-        if kept then
-          bucket.bestFingerprint = winnerKey
-          bucket.variants = { [self:BuildVariantKey(target)] = { fingerprint = winnerKey, effectiveLevel = target.effectiveLevel, upgradeLevel = target.upgradeLevel, statsText = target.statsText, lastSeenAt = target.lastSeenAt } }
-          bucket.variantCount = 1
-        else
-          for variantKey, variant in pairs(bucket.variants or {}) do
-            if variant and variant.fingerprint and not self.data.itemsByFingerprint[variant.fingerprint] then bucket.variants[variantKey] = nil end
-          end
-        end
-      end
-    end
-  end
-  self.data.meta.itemIdConsolidationV1 = true
-  if changed > 0 and addon.LootDebug then addon:LootDebug(string.format("Item ID consolidation complete: removed %d duplicate records.", changed)) end
 end
 
 function DB:CleanupMalformedImportedLocations()
@@ -425,8 +356,10 @@ function DB:GetPreferredFingerprint(itemKey, bucket)
     local candidate = fingerprint and self.data.itemsByFingerprint[fingerprint]
     local location = fingerprint and self:GetBestLocationForFingerprint(fingerprint)
     local hasDirectLocation = candidate and candidate.lastMapId and candidate.lastX and candidate.lastY
-    local hasNamedLocation = location and location.zoneName and location.zoneName ~= ""
-    if (location and location.mapId and location.x and location.y and hasNamedLocation)
+    -- Coordinates are authoritative even when the zone name has not been
+    -- resolved yet. The map can still be opened and the name may be repaired
+    -- later from the active map.
+    if (location and location.mapId and location.x and location.y)
       or (hasDirectLocation and candidate.lastZoneName and candidate.lastZoneName ~= "") then
       return fingerprint
     end
@@ -783,15 +716,17 @@ function DB:_GetResolvedSourceLocation(itemKey, visited)
       local candidateFingerprint = candidateBucket.bestFingerprint
       local candidateEntry = candidateFingerprint and self.data.itemsByFingerprint[candidateFingerprint]
       local idMatches = sourceInfo.sourceItemId and candidateEntry and tonumber(candidateEntry.itemId) == tonumber(sourceInfo.sourceItemId)
-      local nameMatches = sourceInfo.sourceItemName and candidateBucket.itemName and string.lower(candidateBucket.itemName) == string.lower(sourceInfo.sourceItemName)
-      if idMatches or nameMatches then
+      -- Never resolve an upgrade location from a same-name guess.  Several
+      -- upgrade tiers share names, and an arbitrary match can point to the
+      -- current city or vendor instead of the real spawn location.
+      if idMatches then
         local location, resolvedKey = self:GetResolvedSourceLocation(candidateKey, visited)
         if location then return location, resolvedKey end
       end
     end
   end
 
-  if bucket and bucket.bestFingerprint then
+  if bucket and bucket.bestFingerprint and not isUpgradeEntry(entry) then
     local directLocation = self:GetBestLocationForFingerprint(bucket.bestFingerprint)
     if directLocation and directLocation.mapId and directLocation.x and directLocation.y and entry and not isLocationlessSource(entry.lastSource) then
       return directLocation, itemKey
@@ -1071,27 +1006,92 @@ function DB:GetResolvedSourceLocation(itemKey, visited)
   return location, resolvedKey
 end
 
-function DB:RepairUpgradeLocations()
-  if not self.data or self.upgradeLocationRepairQueue then return 0 end
-  self.upgradeLocationRepairReady = false
-  self.upgradeLocationRepairVersion = version
-  self.upgradeLocationRepairProcessed = 0
-  self.upgradeLocationRepairRepaired = 0
-  self.upgradeLocationRepairFailed = 0
-  self.upgradeLocationRepairUnchanged = 0
-  self.upgradeLocationRepairQueue = {}
-  for _, entry in pairs(self.data.itemsByFingerprint or {}) do
-    if entry and isUpgradeEntry(entry) and entry.itemKey
-      and entry.upgradeLocationRepairVersion ~= version
-      and not queuedKeys[entry.itemKey] then
-      self.upgradeLocationRepairQueue[#self.upgradeLocationRepairQueue + 1] = entry
+function DB:GetMapLocationForItem(itemKey)
+  if not self.data or not itemKey then return nil end
+
+  local location, resolvedKey = self:GetResolvedSourceLocation(itemKey)
+  if location then return location, resolvedKey end
+
+  -- Imported databases can have a location on a sibling fingerprint while
+  -- the bucket's preferred fingerprint is a newer, locationless snapshot.
+  -- Use that exact item bucket as a last resort, but never vendor coordinates
+  -- or a location belonging to an upgrade variant.
+  local bucket = self.data.itemsByKey[itemKey]
+  for _, variant in pairs(bucket and bucket.variants or {}) do
+    local fingerprint = variant and variant.fingerprint
+    local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
+    if entry and not isUpgradeEntry(entry) then
+      local candidate = self:GetBestLocationForFingerprint(fingerprint)
+      if candidate and candidate.mapId and candidate.x and candidate.y then
+        return candidate, itemKey
+      end
     end
   end
-  addon:LootDebug(string.format(
-    "Upgrade location repair queued: %d item(s) for version %s.",
-    #self.upgradeLocationRepairQueue,
-    version
-  ))
+
+  -- Some vendor frames expose the previous item only as a colored link that
+  -- cannot be parsed. If the stored upgrade record still has its exact source
+  -- name, use the highest lower-level non-upgrade item with that name. This is
+  -- deliberately limited to upgrade metadata and never uses the vendor point.
+  local upgradeInfo = self:GetUpgradeInfo(itemKey)
+  local sourceInfo = self:GetUpgradeSourceInfo(itemKey)
+  local sourceName = (upgradeInfo and upgradeInfo.sourceItemName) or (sourceInfo and sourceInfo.sourceItemName)
+  local _, currentEntry = self:GetItemEntry(itemKey)
+  if (not sourceName or sourceName == "") and upgradeInfo and currentEntry then
+    -- Older vendor records can identify an upgrade only by its cost. In that
+    -- case the exact item name is still safer than using the vendor location.
+    sourceName = currentEntry.itemName or (bucket and bucket.itemName)
+  end
+  if sourceName and sourceName ~= "" then
+    local wanted = string.lower(strtrim(sourceName))
+    local currentLevel = tonumber(currentEntry and (currentEntry.itemLevel or currentEntry.effectiveLevel)) or math.huge
+    local bestLevel, bestLocation = -math.huge, nil
+    for candidateKey, candidateBucket in pairs(self.data.itemsByKey or {}) do
+      local candidateName = candidateBucket and candidateBucket.itemName
+      if candidateKey ~= itemKey and candidateName and string.lower(strtrim(candidateName)) == wanted then
+        for _, candidateVariant in pairs(candidateBucket.variants or {}) do
+          local fingerprint = candidateVariant and candidateVariant.fingerprint
+          local entry = fingerprint and self.data.itemsByFingerprint[fingerprint]
+          if entry and not isUpgradeEntry(entry) then
+            local candidateLevel = tonumber(entry.itemLevel or entry.effectiveLevel) or 0
+            local candidateLocation = self:GetBestLocationForFingerprint(fingerprint)
+            if candidateLocation and candidateLocation.mapId and candidateLocation.x and candidateLocation.y
+              and candidateLevel + 1 <= currentLevel and candidateLevel > bestLevel then
+              bestLevel = candidateLevel
+              bestLocation = candidateLocation
+            end
+          end
+        end
+      end
+    end
+    if bestLocation then return bestLocation end
+  end
+  return nil
+end
+
+function DB:RepairUpgradeLocations()
+  if not self.data or self.upgradeLocationRepairQueue then return 0 end
+  local version = tostring(addon.version or "unknown")
+  local meta = self.data.meta or {}
+  if meta.upgradeRepairVersion ~= version then
+    meta.upgradeRepairVersion = version
+    meta.upgradeRepairRuns = 0
+  end
+  meta.upgradeRepairRuns = tonumber(meta.upgradeRepairRuns or 0) or 0
+  if meta.upgradeRepairRuns >= 5 then
+    addon:LootDebug(string.format("Upgrade location repair skipped: maximum 5 runs reached for version %s.", version))
+    return 0
+  end
+  meta.upgradeRepairRuns = meta.upgradeRepairRuns + 1
+  self.upgradeLocationRepairReady = false
+  self.upgradeLocationRepairQueue = {}
+  local queuedKeys = {}
+  for _, entry in pairs(self.data.itemsByFingerprint or {}) do
+    if entry and isUpgradeEntry(entry) and entry.itemKey and not queuedKeys[entry.itemKey] then
+      self.upgradeLocationRepairQueue[#self.upgradeLocationRepairQueue + 1] = entry
+      queuedKeys[entry.itemKey] = true
+    end
+  end
+  addon:LootDebug(string.format("Upgrade location repair queued: %d item(s).", #self.upgradeLocationRepairQueue))
   return 0
 end
 
@@ -1101,16 +1101,13 @@ function DB:ProcessUpgradeLocationRepair(limit)
   local repaired = 0
   while limit > 0 and #self.upgradeLocationRepairQueue > 0 do
     local entry = table.remove(self.upgradeLocationRepairQueue, 1)
-    self.upgradeLocationRepairProcessed = (self.upgradeLocationRepairProcessed or 0) + 1
         local location = self:GetMapLocationForItem(entry.itemKey)
-    local changedLocation = false
     if location and location.mapId and location.x and location.y then
       local changed = tonumber(entry.lastMapId) ~= tonumber(location.mapId)
         or tonumber(entry.lastX) ~= tonumber(location.x)
         or tonumber(entry.lastY) ~= tonumber(location.y)
         or entry.lastZoneName ~= location.zoneName
       if changed then
-        changedLocation = true
         entry.lastMapId = location.mapId
         entry.lastContinent = location.continent
         entry.lastZone = location.zone
@@ -1118,29 +1115,13 @@ function DB:ProcessUpgradeLocationRepair(limit)
         entry.lastX = location.x
         entry.lastY = location.y
         repaired = repaired + 1
-        self.upgradeLocationRepairRepaired = (self.upgradeLocationRepairRepaired or 0) + 1
         addon:LootDebug(string.format("Upgrade location repaired: id=%s -> %s", tostring(entry.itemId), tostring(location.zoneName or "?")))
-      else
-        self.upgradeLocationRepairUnchanged = (self.upgradeLocationRepairUnchanged or 0) + 1
-        entry.upgradeLocationRepairVersion = self.upgradeLocationRepairVersion
       end
-    else
-      self.upgradeLocationRepairFailed = (self.upgradeLocationRepairFailed or 0) + 1
-    end
-    if location and location.mapId and location.x and location.y and changedLocation then
-      entry.upgradeLocationRepairVersion = self.upgradeLocationRepairVersion
     end
     limit = limit - 1
   end
   if #self.upgradeLocationRepairQueue == 0 then
-    addon:LootDebug(string.format(
-      "Upgrade location repair complete for version %s: processed=%d repaired=%d unchanged=%d failed=%d.",
-      tostring(self.upgradeLocationRepairVersion or "unknown"),
-      self.upgradeLocationRepairProcessed or 0,
-      self.upgradeLocationRepairRepaired or 0,
-      self.upgradeLocationRepairUnchanged or 0,
-      self.upgradeLocationRepairFailed or 0
-    ))
+    addon:LootDebug(string.format("Upgrade location repair complete: %d item(s).", repaired))
     self.upgradeLocationRepairQueue = nil
   end
   return repaired
@@ -1160,43 +1141,6 @@ function DB:IsVendorLocation(mapId, x, y)
     end
   end
   return false
-end
-
--- Map markers only need located base-item fields. Avoid the full search path
--- here; it resolves filters, upgrade sources and tooltip metadata.
-function DB:GetMapMarkerItems()
-  local results, seen = {}, {}
-  for fingerprint, entry in pairs(self.data and self.data.itemsByFingerprint or {}) do
-    local itemId = tonumber(entry and entry.itemId)
-    local isUpgrade = entry and (entry.isUpgrade == true
-      or entry.upgradeCost ~= nil
-      or (tonumber(entry.upgradeLevel or 0) or 0) > 0)
-    local x, y = tonumber(entry and entry.lastX), tonumber(entry and entry.lastY)
-    if itemId and entry and entry.isWorldforged and not isUpgrade
-      and entry.itemLink and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
-      and entry.quality ~= 0 then
-      local key = entry.itemKey or ("item:" .. tostring(itemId))
-      if not seen[key] then
-        seen[key] = true
-        results[#results + 1] = {
-          itemId = itemId,
-          itemKey = key,
-          fingerprint = fingerprint,
-          itemName = entry.itemName,
-          itemLink = entry.itemLink,
-          itemTexture = entry.itemTexture,
-          itemLevel = entry.itemLevel,
-          quality = entry.quality,
-          realm = entry.realm,
-          lastMapId = tonumber(entry.lastMapId),
-          lastX = x,
-          lastY = y,
-          lastZoneName = entry.lastZoneName,
-        }
-      end
-    end
-  end
-  return results
 end
 
 function DB:SearchItems(query, filters)
@@ -1303,26 +1247,8 @@ function DB:SearchItems(query, filters)
       end
 
       if matches then
-          local sharedSource = entry.lastSource == "import"
-            or entry.lastSource == "party"
-            or entry.lastSource == "guild"
-            or entry.lastSource == "manual"
-          if entry.isWorldforged == true and entry.quality ~= 0
-            and (hasBindOnPickup(entry) or sharedSource) and entry.itemLink then
-            local location
-            if (entry.lastSource == "loot-chat" or entry.lastSource == "loot" or entry.lastSource == "loot-opened")
-              and entry.lastMapId and entry.lastX and entry.lastY then
-              location = {
-                mapId = entry.lastMapId,
-                continent = entry.lastContinent,
-                zone = entry.lastZone,
-                zoneName = entry.lastZoneName,
-                x = entry.lastX,
-                y = entry.lastY,
-              }
-            else
-              location = self:GetBestLocationForFingerprint(fingerprint)
-            end
+        if entry.isWorldforged == true and entry.quality ~= 0 and hasBindOnPickup(entry) and entry.itemLink then
+          local location = self:GetBestLocationForFingerprint(fingerprint)
           local upgradeInfo = self:GetUpgradeInfo(itemKey)
           local sourceInfo = self:GetUpgradeSourceInfo(itemKey)
           local sourceLocation, resolvedSourceItemKey = self:GetResolvedSourceLocation(itemKey)
