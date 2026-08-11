@@ -239,11 +239,15 @@ function ItemScan:FinalizePendingRecord(record)
     y = record.y,
   })
 
-  if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+  if not (addon.Sync and addon.Sync.importActive)
+    and addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
     addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
   end
 
-  if record.mapId and record.x and record.y then
+  -- Vendor upgrade coordinates identify the offer location, not an item spawn.
+  -- Keep them only in vendorsByNpcId and let upgrades resolve their source item.
+  if record.mapId and record.x and record.y and record.sourceType ~= "upgrade-frame"
+    and record.sourceType ~= "upgrade-tooltip" and record.sourceType ~= "merchant" then
     addon.DB:RecordSpawnPoint(fingerprint, record.mapId, record.x, record.y, {
       continent = record.continent,
       zone = record.zone,
@@ -353,23 +357,11 @@ function ItemScan:RepairStoredItem(itemId, entry)
   entry.itemTexture = itemTexture
   entry.statsText = entry.statsText or statsText
   entry.tooltipText = entry.tooltipText or tooltipText
-  if self:IsWorldforgedItem(itemLink, true) then
-    entry.isWorldforged = true
-  else
-    entry.isWorldforged = false
-    entry.upgradeCandidate = nil
-    addon:LootDebug(string.format(
-      "Rejected non-Worldforged stored item: id=%s name=%s",
-      tostring(itemId), tostring(itemName)
-    ))
-  end
+  entry.isWorldforged = true
   return true
 end
 
 function ItemScan:RepairStoredItems(itemId, limit)
-  if addon.SearchUI and addon.SearchUI.UpdateRepairIndicator then
-    addon.SearchUI:UpdateRepairIndicator()
-  end
   if addon.Sync and addon.Sync.importActive then return 0 end
   if not addon.DB or not addon.DB.data then
     return 0
@@ -393,7 +385,6 @@ function ItemScan:RepairStoredItems(itemId, limit)
           self.repairQueue[#self.repairQueue + 1] = entry
         end
       end
-      self.repairQueueTotal = #self.repairQueue
       self.repairQueueInitialized = true
     end
   end
@@ -423,9 +414,6 @@ function ItemScan:RepairStoredItems(itemId, limit)
   if repaired > 0 and addon.MapNotes and addon.MapNotes.RefreshAllMarkers then
     addon.MapNotes:RefreshAllMarkers()
   end
-  if addon.SearchUI and addon.SearchUI.UpdateRepairIndicator then
-    addon.SearchUI:UpdateRepairIndicator()
-  end
   return repaired
 end
 
@@ -433,38 +421,28 @@ function ItemScan:GetRepairStatus()
   local pendingItems = addon.DB and addon.DB.GetPendingItems and addon.DB:GetPendingItems() or {}
   local pendingCount = 0
   for _ in pairs(pendingItems or {}) do pendingCount = pendingCount + 1 end
-  local pendingUpgradeLocations = 0
-  if addon.DB and addon.DB.upgradeLocationRepairQueue then
-    pendingUpgradeLocations = #addon.DB.upgradeLocationRepairQueue
-  end
   if self.repairQueue then
     local pending = #self.repairQueue
     if pending > 0 then
-      return "active", pending + pendingCount + pendingUpgradeLocations, self.repairQueueTotal or pending
+      return "active", pending + pendingCount
     end
   end
   if self.zoneRepairQueue then
     local pending = #self.zoneRepairQueue
     if pending > 0 then
-      return "active", pending + pendingCount + pendingUpgradeLocations
+      return "active", pending + pendingCount
     end
   end
   if pendingCount > 0 then
-    return "active", pendingCount + pendingUpgradeLocations
-  end
-  if pendingUpgradeLocations > 0 then
-    return "active", pendingUpgradeLocations
+    return "active", pendingCount
   end
   if self.repairQueueInitialized then
     return "complete", 0
   end
-  return "idle", 0, self.repairQueueTotal or 0
+  return "idle", 0
 end
 
 function ItemScan:RepairStoredZoneNames(limit)
-  if addon.SearchUI and addon.SearchUI.UpdateRepairIndicator then
-    addon.SearchUI:UpdateRepairIndicator()
-  end
   if not addon.DB or not addon.DB.data or not addon.ResolveZoneName then
     return 0
   end

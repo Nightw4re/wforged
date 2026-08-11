@@ -34,6 +34,6 @@ test('bundled database has a valid WFGDB6 snapshot', () => {
 
 test('bundled database is loaded by the addon and documented in the TOC', () => {
   assert.match(toc, /^BundledData\.lua$/m);
-  assert.match(fs.readFileSync(path.join(addonDir, 'Wforged.lua'), 'utf8'), /self\.Sync:Import\(WforgedBundledData\)/);
+  assert.match(fs.readFileSync(path.join(addonDir, 'Wforged.lua'), 'utf8'), /self\.Sync:Import\(WforgedBundledData/);
   assert.match(toc, /Bundled snapshot: \d+ unique items including located base items and upgrades\./);
 });

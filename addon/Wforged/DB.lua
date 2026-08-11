@@ -55,6 +55,38 @@ local function matchesItemType(haystack, itemType)
   return true
 end
 
+local function parseSearchTerms(query)
+  local terms = {}
+  local normalized = string.lower(strtrim(query or ""))
+  local position = 1
+  while position <= #normalized do
+    local startQuote, endQuote, phrase = normalized:find('"([^"]+)"', position)
+    local nextSpace = normalized:find("%s", position)
+    if startQuote and (not nextSpace or startQuote <= nextSpace) then
+      terms[#terms + 1] = phrase
+      position = endQuote + 1
+    else
+      local word = normalized:match("%S+", position)
+      if not word then break end
+      terms[#terms + 1] = word
+      local separator = normalized:find("%s", position)
+      position = separator and (separator + 1) or (#normalized + 1)
+    end
+  end
+  return terms
+end
+
+local function matchesExactSlot(tooltipText, slot)
+  local wanted = string.lower(strtrim(slot or ""))
+  if wanted == "" then return true end
+  for line in tostring(tooltipText or ""):gmatch("[^|]+") do
+    if string.lower(strtrim(line)) == wanted then
+      return true
+    end
+  end
+  return false
+end
+
 local function ensureTable(root, key)
   if type(root[key]) ~= "table" then
     root[key] = {}
@@ -527,7 +559,10 @@ function DB:RecordItemObservation(payload)
   entry.lastSeenAt = observedAt
   entry.lastSource = payload.sourceType
   local hasLocation = payload.mapId and payload.x and payload.y
-  if hasLocation or not isLocationlessSource(payload.sourceType) then
+  -- Inventory and vendor observations must not replace a real spawn location.
+  -- Vendor coordinates belong to vendorsByNpcId, while an upgrade inherits its
+  -- location from the referenced source item.
+  if not isLocationlessSource(payload.sourceType) then
     entry.lastMapId = payload.mapId
     entry.lastContinent = payload.continent
     entry.lastZone = payload.zone
@@ -1172,10 +1207,7 @@ function DB:SearchItems(query, filters)
 
   local normalizedQuery = string.lower(strtrim(query or ""))
   filters = filters or {}
-  local terms = {}
-  for term in normalizedQuery:gmatch("%S+") do
-    terms[#terms + 1] = term
-  end
+  local terms = parseSearchTerms(normalizedQuery)
   for itemKey, bucket in pairs(self.data.itemsByKey) do
     local hasUpgradeInfo = self:GetUpgradeInfo(itemKey) ~= nil
     local fingerprint = self:GetPreferredFingerprint(itemKey, bucket)
@@ -1230,13 +1262,19 @@ function DB:SearchItems(query, filters)
           matches = false
         end
       end
-      if matches and filters.slot and filters.slot ~= "" and not haystack:find(string.lower(filters.slot), 1, true) then
+      if matches and filters.slot and filters.slot ~= "" and not matchesExactSlot(entry.tooltipText or bucket.tooltipText, filters.slot) then
         matches = false
       end
       if matches and filters.stat1 and filters.stat1 ~= "" and not haystack:find(string.lower(filters.stat1), 1, true) then
         matches = false
       end
       if matches and filters.stat2 and filters.stat2 ~= "" and not haystack:find(string.lower(filters.stat2), 1, true) then
+        matches = false
+      end
+      if matches and filters.stat3 and filters.stat3 ~= "" and not haystack:find(string.lower(filters.stat3), 1, true) then
+        matches = false
+      end
+      if matches and filters.stat4 and filters.stat4 ~= "" and not haystack:find(string.lower(filters.stat4), 1, true) then
         matches = false
       end
       if matches and filters.level and filters.level ~= "" then

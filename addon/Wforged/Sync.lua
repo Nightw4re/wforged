@@ -5,10 +5,8 @@ addon.Sync = Sync
 
 Sync.prefix = "WFORGED"
 Sync.exportFormat = "WFGDB8"
--- Item metadata requests and tooltip scans are synchronous on this client.
--- Keep imports deliberately small so a large bundled snapshot does not hitch.
-Sync.importBatchSize = 1
-Sync.importInterval = 0.75
+Sync.importBatchSize = 2
+Sync.importInterval = 0.5
 Sync.shareChunkSize = 180
 Sync.shareChunkDelay = 0.15
 Sync.collectorEnabled = false
@@ -102,7 +100,7 @@ local function decodePayload(fields)
     fingerprint = fingerprint ~= "" and fingerprint or string.format("id:%d", itemId or 0),
     itemId = itemId, itemName = itemName, itemLink = itemLink,
     itemTexture = itemTexture, quality = quality, itemLevel = itemLevel,
-    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId,
+    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = fields.importSource or "import", mapId = mapId,
     x = hasLocation and tonumber(fields[4]) or nil, y = hasLocation and tonumber(fields[5]) or nil,
     zoneName = knownZoneName or fields[8],
     upgradeCost = upgradeCost, upgradeCurrency = upgradeCurrency,
@@ -113,6 +111,7 @@ local function decodePayload(fields)
 end
 
 function Sync:RefreshItemInfo(itemId)
+  if self.importActive then return end
   itemId = tonumber(itemId)
   if not itemId or not GetItemInfo then return end
   local queryLink = string.format("|Hitem:%d:0:0:0:0:0:0:0:0|h[Item]|h", itemId)
@@ -231,7 +230,6 @@ function Sync:Import(textValue, context)
   end
   WforgedLastImport = textValue
   self.importActive = true
-  self.importProcessed = 0
   self.pendingImports = self.pendingImports or {}
   self.pendingImportIndex = self.pendingImportIndex or 1
   local queued = 0
@@ -282,7 +280,6 @@ function Sync:Import(textValue, context)
   table.sort(importedRecords, function(left, right)
     return tostring(left[2] or "") < tostring(right[2] or "")
   end)
-  self.importTotal = #importedRecords
   for _, fields in ipairs(importedRecords) do
     fields.importSource = context and context.source or "manual"
     self.pendingImports[#self.pendingImports + 1] = fields
@@ -320,7 +317,6 @@ function Sync:ProcessImportQueue(elapsed)
     local fields = self.pendingImports[self.pendingImportIndex]
     if not fields then break end
     self.pendingImportIndex = self.pendingImportIndex + 1
-    self.importProcessed = (self.importProcessed or 0) + 1
     local payload = decodePayload(fields)
     if payload then
       local partyImport = fields.importSource == "party"
@@ -348,8 +344,6 @@ function Sync:ProcessImportQueue(elapsed)
     self.pendingImports = {}
     self.pendingImportIndex = 1
     self.importActive = false
-    self.importProcessed = 0
-    self.importTotal = 0
     if self.partyImportStats then
       addon:Print(string.format(
         "Party database import complete: %d new item(s), %d with location.",
@@ -357,7 +351,7 @@ function Sync:ProcessImportQueue(elapsed)
       ))
       self.partyImportStats = nil
     else
-      addon:Print("Import complete: " .. tostring(total) .. " items processed.")
+      addon:LootDebug("Import complete: " .. tostring(total) .. " items processed.")
     end
     if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
       addon.ItemScan:ResetZoneNameRepair()
@@ -596,7 +590,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
   end
 
   if message and (message:sub(1, 7) == "WFGDB7|" or message:sub(1, 7) == "WFGDB8|") then
-    self:Import(message, { source = "guild" })
+    self:Import(message)
     addon:LootDebug("Guild payload queued as WFGDB7.")
   elseif message and message:sub(1, 5) == "WFG6|" then
     local fields = splitPayload(message)
@@ -625,7 +619,8 @@ function Sync:MergeRemoteItem(payload)
   local fingerprint = bucket and bucket.bestFingerprint or payload.fingerprint
   local existing = fingerprint and addon.DB.data.itemsByFingerprint[fingerprint] or nil
 
-  if (not existing) or (tonumber(payload.observedAt or 0) >= tonumber(existing.lastSeenAt or 0)) then
+  local bundledSource = payload.sourceType == "bundled"
+  if bundledSource or (not existing) or (tonumber(payload.observedAt or 0) >= tonumber(existing.lastSeenAt or 0)) then
     if existing then
       -- Compact sync data only owns location and timestamp; retain locally resolved item details.
       payload.itemLink = existing.itemLink
@@ -641,10 +636,10 @@ function Sync:MergeRemoteItem(payload)
     payload.itemKey = itemKey
     payload.fingerprint = fingerprint
     local stored = addon.DB:RecordItemObservation(payload)
-    if addon.ItemScan and addon.ItemScan.RepairStoredItems then
+    if not self.importActive and addon.ItemScan and addon.ItemScan.RepairStoredItems then
       addon.ItemScan:RepairStoredItems(payload.itemId)
     end
-    if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
+    if not self.importActive and addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
       addon.ItemScan:ResetZoneNameRepair()
     end
     addon:LootDebug(string.format("Import stored: id=%s name=%s map=%s x=%s y=%s quality=%s level=%s", tostring(payload.itemId), tostring(stored and stored.itemName or payload.itemName), tostring(stored and stored.lastMapId), tostring(stored and stored.lastX), tostring(stored and stored.lastY), tostring(stored and stored.quality), tostring(stored and stored.itemLevel)))

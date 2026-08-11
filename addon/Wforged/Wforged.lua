@@ -417,7 +417,7 @@ registerEvent("PLAYER_LOGIN", function(self)
   self.DB:Init()
   self.Sync:Init()
   if WforgedBundledData and WforgedBundledDataVersion and self.DB.data.meta.bundledDataVersion ~= WforgedBundledDataVersion then
-    self.Sync:Import(WforgedBundledData)
+    self.Sync:Import(WforgedBundledData, { source = "bundled" })
     self.DB.data.meta.bundledDataVersion = WforgedBundledDataVersion
     self:Print("Bundled database imported.")
   end
