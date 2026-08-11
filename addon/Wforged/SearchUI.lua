@@ -1145,7 +1145,7 @@ function SearchUI:Toggle()
     frame.filters = {}
     local filterKinds = {"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "stat3", "stat4", "level", "variant"}
     for index, kind in ipairs(filterKinds) do
-      local filterRow = index <= 4 and 0 or 1
+      local filterRow = index <= 4 and 0 or (index <= 8 and 1 or 2)
       local filterColumn = (index - 1) % 4
       frame.filters[kind] = createFilter(frame, kind, 16 + (filterColumn * 150), -70 - (filterRow * 32))
       self.filters[kind] = state.filters and state.filters[kind] or ""
