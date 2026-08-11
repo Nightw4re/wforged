@@ -4,7 +4,7 @@ addon = addon or {}
 _G[addonName] = addon
 
 addon.name = addonName
-addon.version = "1.0.1"
+addon.version = "1.4.1"
 addon.debug = false
 addon.AutoConfirm = addon.AutoConfirm or {}
 addon.MinimapButton = addon.MinimapButton or {}

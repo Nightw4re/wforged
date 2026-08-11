@@ -67,6 +67,10 @@ test('upgrade repair waits 30 seconds after login', () => {
   assert.match(core, /C_Timer\.After\(30, function\(\)/);
 });
 
+test('runtime addon version is not left on the old hardcoded version', () => {
+  assert.doesNotMatch(core, /addon\.version\s*=\s*"1\.0\.1"/);
+});
+
 test('previous-item search makes exact phrase syntax visible', () => {
   assert.match(ui, /quotedSourceName = sourceName and \('\"' \.\. tostring\(sourceName\)/);
   assert.match(ui, /SetText\(quotedSourceName\)/);
