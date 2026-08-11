@@ -55,9 +55,17 @@ end
 
 local fingerprintEntries = readFingerprintEntries(source)
 local latest = {}
+local function isUpgradeEntry(entry)
+  return entry.isUpgrade == true
+    or (tonumber(entry.upgradeLevel or 0) or 0) > 0
+    or (tonumber(entry.upgradeCost or 0) or 0) > 0
+end
+
 local function recordScore(entry)
   local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
-  local located = mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
+  -- Vendor coordinates on upgrade records are not spawn locations. Prefer a
+  -- located base item when several fingerprints share the same item ID.
+  local located = not isUpgradeEntry(entry) and mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
   local cost = tonumber(entry.upgradeCost or 0) or 0
   return (located and 1000000000000 or 0) + (cost > 0 and 1000000000 or 0)
     + (tonumber(entry.lastSeenAt or entry.firstSeenAt or 0) or 0)
@@ -67,7 +75,7 @@ for _, record in ipairs(fingerprintEntries) do
   local id = tonumber(entry.itemId)
   local upgrade = tonumber(entry.upgradeLevel or 0) or 0
   local mapId, x, y = tonumber(entry.lastMapId), tonumber(entry.lastX), tonumber(entry.lastY)
-  local hasLocation = mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
+  local hasLocation = not isUpgradeEntry(entry) and mapId and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
   local hasUpgradeCost = tonumber(entry.upgradeCost or 0) and tonumber(entry.upgradeCost or 0) > 0
   if id and entry.isWorldforged and entry.lastSource ~= "merchant" and (hasLocation or hasUpgradeCost) then
     -- Item IDs identify the scaled/upgrade variants in this client. Keep one

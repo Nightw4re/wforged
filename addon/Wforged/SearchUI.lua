@@ -476,12 +476,25 @@ end
 function SearchUI:UpdateRepairIndicator()
   local indicator = self.frame and self.frame.repairIndicator
   if not indicator then return end
-  local state, pending = "idle", 0
+  if addon.Sync and addon.Sync.importActive then
+    local processed = addon.Sync.importProcessed or 0
+    local total = addon.Sync.importTotal or 0
+    indicator:SetText(string.format("Processing %d/%d items...", processed, total))
+    indicator:SetTextColor(1, 0.82, 0, 1)
+    indicator:Show()
+    return
+  end
+  local state, pending, total = "idle", 0, 0
   if addon.ItemScan and addon.ItemScan.GetRepairStatus then
-    state, pending = addon.ItemScan:GetRepairStatus()
+    state, pending, total = addon.ItemScan:GetRepairStatus()
   end
   if state == "active" then
-    indicator:SetText(string.format("Loading item data... %d remaining", pending))
+    if total and total > 0 and addon.ItemScan and addon.ItemScan.repairQueue then
+      local processed = total - #addon.ItemScan.repairQueue
+      indicator:SetText(string.format("Processing %d/%d items...", processed, total))
+    else
+      indicator:SetText(string.format("Processing %d items...", pending))
+    end
     indicator:SetTextColor(1, 0.82, 0, 1)
     indicator:Show()
   else
@@ -616,6 +629,8 @@ function SearchUI:SetSelectedResult(result)
 end
 
 function SearchUI:Refresh(query)
+  self:UpdateRepairIndicator()
+  self:UpdateDynamicColumns(query or (self.frame and self.frame.editBox and self.frame.editBox:GetText()) or "")
   if not self.rows then
     return
   end
@@ -866,6 +881,17 @@ function SearchUI:Toggle()
     frame:SetPoint(state.point or "CENTER", UIParent, state.relativePoint or "CENTER", state.x or 0, state.y or 0)
     frame:SetMovable(true)
     frame:EnableMouse(true)
+    frame:SetScript("OnMouseDown", function()
+      closeFilterDropdown()
+    end)
+    frame.repairIndicatorElapsed = 0
+    frame:SetScript("OnUpdate", function(self, elapsed)
+      self.repairIndicatorElapsed = (self.repairIndicatorElapsed or 0) + elapsed
+      if self.repairIndicatorElapsed >= 0.5 then
+        self.repairIndicatorElapsed = 0
+        SearchUI:UpdateRepairIndicator()
+      end
+    end)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
@@ -961,7 +987,10 @@ function SearchUI:Toggle()
     hint:SetText("Search by name, stats, level, or upgrade.")
     frame.repairIndicator = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     frame.repairIndicator:SetPoint("LEFT", hint, "RIGHT", 12, 0)
-    frame.repairIndicator:SetWidth(190)
+    frame.repairIndicator:SetWidth(280)
+    if frame.repairIndicator.SetNonSpaceWrap then
+      frame.repairIndicator:SetNonSpaceWrap(false)
+    end
     frame.repairIndicator:SetJustifyH("LEFT")
     frame.repairIndicator:Hide()
 

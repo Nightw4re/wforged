@@ -353,7 +353,16 @@ function ItemScan:RepairStoredItem(itemId, entry)
   entry.itemTexture = itemTexture
   entry.statsText = entry.statsText or statsText
   entry.tooltipText = entry.tooltipText or tooltipText
-  entry.isWorldforged = true
+  if self:IsWorldforgedItem(itemLink, true) then
+    entry.isWorldforged = true
+  else
+    entry.isWorldforged = false
+    entry.upgradeCandidate = nil
+    addon:LootDebug(string.format(
+      "Rejected non-Worldforged stored item: id=%s name=%s",
+      tostring(itemId), tostring(itemName)
+    ))
+  end
   return true
 end
 

@@ -1039,13 +1039,24 @@ end
 function DB:RepairUpgradeLocations()
   if not self.data or self.upgradeLocationRepairQueue then return 0 end
   self.upgradeLocationRepairReady = false
+  self.upgradeLocationRepairVersion = version
+  self.upgradeLocationRepairProcessed = 0
+  self.upgradeLocationRepairRepaired = 0
+  self.upgradeLocationRepairFailed = 0
+  self.upgradeLocationRepairUnchanged = 0
   self.upgradeLocationRepairQueue = {}
   for _, entry in pairs(self.data.itemsByFingerprint or {}) do
-    if entry and isUpgradeEntry(entry) and entry.itemKey then
+    if entry and isUpgradeEntry(entry) and entry.itemKey
+      and entry.upgradeLocationRepairVersion ~= version
+      and not queuedKeys[entry.itemKey] then
       self.upgradeLocationRepairQueue[#self.upgradeLocationRepairQueue + 1] = entry
     end
   end
-  addon:LootDebug(string.format("Upgrade location repair queued: %d item(s).", #self.upgradeLocationRepairQueue))
+  addon:LootDebug(string.format(
+    "Upgrade location repair queued: %d item(s) for version %s.",
+    #self.upgradeLocationRepairQueue,
+    version
+  ))
   return 0
 end
 
@@ -1055,13 +1066,16 @@ function DB:ProcessUpgradeLocationRepair(limit)
   local repaired = 0
   while limit > 0 and #self.upgradeLocationRepairQueue > 0 do
     local entry = table.remove(self.upgradeLocationRepairQueue, 1)
-    local location = self:GetResolvedSourceLocation(entry.itemKey)
+    self.upgradeLocationRepairProcessed = (self.upgradeLocationRepairProcessed or 0) + 1
+        local location = self:GetMapLocationForItem(entry.itemKey)
+    local changedLocation = false
     if location and location.mapId and location.x and location.y then
       local changed = tonumber(entry.lastMapId) ~= tonumber(location.mapId)
         or tonumber(entry.lastX) ~= tonumber(location.x)
         or tonumber(entry.lastY) ~= tonumber(location.y)
         or entry.lastZoneName ~= location.zoneName
       if changed then
+        changedLocation = true
         entry.lastMapId = location.mapId
         entry.lastContinent = location.continent
         entry.lastZone = location.zone
@@ -1069,13 +1083,29 @@ function DB:ProcessUpgradeLocationRepair(limit)
         entry.lastX = location.x
         entry.lastY = location.y
         repaired = repaired + 1
+        self.upgradeLocationRepairRepaired = (self.upgradeLocationRepairRepaired or 0) + 1
         addon:LootDebug(string.format("Upgrade location repaired: id=%s -> %s", tostring(entry.itemId), tostring(location.zoneName or "?")))
+      else
+        self.upgradeLocationRepairUnchanged = (self.upgradeLocationRepairUnchanged or 0) + 1
+        entry.upgradeLocationRepairVersion = self.upgradeLocationRepairVersion
       end
+    else
+      self.upgradeLocationRepairFailed = (self.upgradeLocationRepairFailed or 0) + 1
+    end
+    if location and location.mapId and location.x and location.y and changedLocation then
+      entry.upgradeLocationRepairVersion = self.upgradeLocationRepairVersion
     end
     limit = limit - 1
   end
   if #self.upgradeLocationRepairQueue == 0 then
-    addon:LootDebug(string.format("Upgrade location repair complete: %d item(s).", repaired))
+    addon:LootDebug(string.format(
+      "Upgrade location repair complete for version %s: processed=%d repaired=%d unchanged=%d failed=%d.",
+      tostring(self.upgradeLocationRepairVersion or "unknown"),
+      self.upgradeLocationRepairProcessed or 0,
+      self.upgradeLocationRepairRepaired or 0,
+      self.upgradeLocationRepairUnchanged or 0,
+      self.upgradeLocationRepairFailed or 0
+    ))
     self.upgradeLocationRepairQueue = nil
   end
   return repaired
@@ -1095,6 +1125,43 @@ function DB:IsVendorLocation(mapId, x, y)
     end
   end
   return false
+end
+
+-- Map markers only need located base-item fields. Avoid the full search path
+-- here; it resolves filters, upgrade sources and tooltip metadata.
+function DB:GetMapMarkerItems()
+  local results, seen = {}, {}
+  for fingerprint, entry in pairs(self.data and self.data.itemsByFingerprint or {}) do
+    local itemId = tonumber(entry and entry.itemId)
+    local isUpgrade = entry and (entry.isUpgrade == true
+      or entry.upgradeCost ~= nil
+      or (tonumber(entry.upgradeLevel or 0) or 0) > 0)
+    local x, y = tonumber(entry and entry.lastX), tonumber(entry and entry.lastY)
+    if itemId and entry and entry.isWorldforged and not isUpgrade
+      and entry.itemLink and x and y and x >= 0 and x <= 1 and y >= 0 and y <= 1
+      and entry.quality ~= 0 then
+      local key = entry.itemKey or ("item:" .. tostring(itemId))
+      if not seen[key] then
+        seen[key] = true
+        results[#results + 1] = {
+          itemId = itemId,
+          itemKey = key,
+          fingerprint = fingerprint,
+          itemName = entry.itemName,
+          itemLink = entry.itemLink,
+          itemTexture = entry.itemTexture,
+          itemLevel = entry.itemLevel,
+          quality = entry.quality,
+          realm = entry.realm,
+          lastMapId = tonumber(entry.lastMapId),
+          lastX = x,
+          lastY = y,
+          lastZoneName = entry.lastZoneName,
+        }
+      end
+    end
+  end
+  return results
 end
 
 function DB:SearchItems(query, filters)

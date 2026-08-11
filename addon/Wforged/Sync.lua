@@ -5,8 +5,10 @@ addon.Sync = Sync
 
 Sync.prefix = "WFORGED"
 Sync.exportFormat = "WFGDB8"
-Sync.importBatchSize = 2
-Sync.importInterval = 0.5
+-- Item metadata requests and tooltip scans are synchronous on this client.
+-- Keep imports deliberately small so a large bundled snapshot does not hitch.
+Sync.importBatchSize = 1
+Sync.importInterval = 0.75
 Sync.shareChunkSize = 180
 Sync.shareChunkDelay = 0.15
 Sync.collectorEnabled = false
@@ -228,6 +230,8 @@ function Sync:Import(textValue, context)
     addon:LootDebug("Legacy import format WFGDB6 detected; prefer WFGDB7 exports.")
   end
   WforgedLastImport = textValue
+  self.importActive = true
+  self.importProcessed = 0
   self.pendingImports = self.pendingImports or {}
   self.pendingImportIndex = self.pendingImportIndex or 1
   local queued = 0
@@ -278,6 +282,7 @@ function Sync:Import(textValue, context)
   table.sort(importedRecords, function(left, right)
     return tostring(left[2] or "") < tostring(right[2] or "")
   end)
+  self.importTotal = #importedRecords
   for _, fields in ipairs(importedRecords) do
     fields.importSource = context and context.source or "manual"
     self.pendingImports[#self.pendingImports + 1] = fields
@@ -315,6 +320,7 @@ function Sync:ProcessImportQueue(elapsed)
     local fields = self.pendingImports[self.pendingImportIndex]
     if not fields then break end
     self.pendingImportIndex = self.pendingImportIndex + 1
+    self.importProcessed = (self.importProcessed or 0) + 1
     local payload = decodePayload(fields)
     if payload then
       local partyImport = fields.importSource == "party"
@@ -341,6 +347,9 @@ function Sync:ProcessImportQueue(elapsed)
     local total = #self.pendingImports
     self.pendingImports = {}
     self.pendingImportIndex = 1
+    self.importActive = false
+    self.importProcessed = 0
+    self.importTotal = 0
     if self.partyImportStats then
       addon:Print(string.format(
         "Party database import complete: %d new item(s), %d with location.",

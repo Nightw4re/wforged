@@ -312,7 +312,8 @@ local function ensureMapPin()
       if not WorldMapDetailFrame or not WorldMapFrame:IsShown() then return end
       -- Zone repair scans stored records. Run it once per map identity, not
       -- on every frame while the map is open or resized.
-      if addon.ItemScan and addon.ItemScan.RepairZoneNamesFromOpenMap then
+      if addon.ItemScan and addon.ItemScan.zoneRepairInteractive
+        and addon.ItemScan.RepairZoneNamesFromOpenMap then
         local mapId = GetCurrentMapAreaID and GetCurrentMapAreaID() or nil
         local mapName = GetMapInfo and GetMapInfo() or nil
         local repairKey = tostring(mapId or "?") .. ":" .. tostring(mapName or "?")
@@ -447,12 +448,13 @@ function addon.MapNotes:EnsureAllMapCheckbox()
 end
 
 function addon.MapNotes:RefreshAllMarkers(force)
+  local refreshStarted = debugprofilestop and debugprofilestop() or nil
   -- Mapster/ElvUI can emit several size/map events during one zoom step.
   -- Coalesce them so the expensive item search and pin layout run once.
   if not force and C_Timer and C_Timer.After then
     if self.markerRefreshScheduled then return end
     self.markerRefreshScheduled = true
-    C_Timer.After(0.15, function()
+    C_Timer.After(0.03, function()
       self.markerRefreshScheduled = false
       self:RefreshAllMarkers(true)
     end)
@@ -464,14 +466,24 @@ function addon.MapNotes:RefreshAllMarkers(force)
     for _, marker in pairs(self.allMarkers) do marker:Hide() end
     return
   end
+
   local visible = {}
   -- Reuse the normalized result set during rapid map layout events. Building
   -- it scans the full database and must not happen on every zoom frame.
   local now = GetTime and GetTime() or 0
   if not self.markerResultsCache or not self.markerResultsCacheAt
     or now - self.markerResultsCacheAt >= 1 then
-    self.markerResultsCache = addon.DB and addon.DB.SearchItems and addon.DB:SearchItems("") or {}
+    local searchStarted = debugprofilestop and debugprofilestop() or nil
+    self.markerResultsCache = addon.DB and addon.DB.GetMapMarkerItems
+      and addon.DB:GetMapMarkerItems() or {}
     self.markerResultsCacheAt = now
+    if searchStarted and addon.LootDebug then
+      addon:LootDebug(string.format(
+        "Map marker DB search: %d result(s) in %.1f ms.",
+        #self.markerResultsCache,
+        debugprofilestop() - searchStarted
+      ))
+    end
   end
   local results = self.markerResultsCache
   for _, result in ipairs(results) do
@@ -524,6 +536,12 @@ function addon.MapNotes:RefreshAllMarkers(force)
   end
   for key, marker in pairs(self.allMarkers) do
     if not visible[key] then marker:Hide() end
+  end
+  if refreshStarted and addon.LootDebug then
+    addon:LootDebug(string.format(
+      "Map marker refresh total: %.1f ms.",
+      debugprofilestop() - refreshStarted
+    ))
   end
 end
 
