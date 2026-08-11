@@ -7,6 +7,7 @@
 - Amend the relevant local commit, or squash related commits before pushing.
 - Use meaningful conventional commit names such as `feat(sync): ...`, `fix(ui): ...`, and `chore(tooling): ...`.
 - Do not push automatically. Push only when explicitly requested.
+- Never modify, amend, or rewrite merge commits. Leave merge commits intact and place later fixes in a new follow-up commit or a non-merge commit that already owns the affected change.
 
 ## Verification
 
