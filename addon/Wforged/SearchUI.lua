@@ -60,6 +60,20 @@ local function updateFilterVisual(button)
   end
 end
 
+local function bindFilterVisualHandlers(button)
+  if not button or button.wforgedVisualHandlers then return end
+  button.wforgedVisualHandlers = true
+  local previousEnter = button.GetScript and button:GetScript("OnEnter") or nil
+  local previousLeave = button.GetScript and button:GetScript("OnLeave") or nil
+  button:SetScript("OnEnter", function(self)
+    if previousEnter then previousEnter(self) end
+  end)
+  button:SetScript("OnLeave", function(self)
+    if previousLeave then previousLeave(self) end
+    updateFilterVisual(self)
+  end)
+end
+
 local function createFilter(parent, kind, x, y)
   local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   button:SetSize(108, 22)
@@ -1917,6 +1931,8 @@ function SearchUI:ApplyElvUISkin(frame)
     for _, header in ipairs(frame.headers or {}) do S:HandleButton(header) end
     for _, button in pairs(frame.filters or {}) do
       S:HandleButton(button)
+      bindFilterVisualHandlers(button)
+      updateFilterVisual(button)
     end
   end
   if S.HandleEditBox and frame.editBox then
