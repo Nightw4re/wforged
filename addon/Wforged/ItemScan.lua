@@ -239,11 +239,15 @@ function ItemScan:FinalizePendingRecord(record)
     y = record.y,
   })
 
-  if addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
+  if not (addon.Sync and addon.Sync.importActive)
+    and addon.SearchUI and addon.SearchUI.frame and addon.SearchUI.frame:IsShown() then
     addon.SearchUI:Refresh(addon.SearchUI.frame.editBox and addon.SearchUI.frame.editBox:GetText() or "")
   end
 
-  if record.mapId and record.x and record.y then
+  -- Vendor upgrade coordinates identify the offer location, not an item spawn.
+  -- Keep them only in vendorsByNpcId and let upgrades resolve their source item.
+  if record.mapId and record.x and record.y and record.sourceType ~= "upgrade-frame"
+    and record.sourceType ~= "upgrade-tooltip" and record.sourceType ~= "merchant" then
     addon.DB:RecordSpawnPoint(fingerprint, record.mapId, record.x, record.y, {
       continent = record.continent,
       zone = record.zone,
@@ -358,6 +362,7 @@ function ItemScan:RepairStoredItem(itemId, entry)
 end
 
 function ItemScan:RepairStoredItems(itemId, limit)
+  if addon.Sync and addon.Sync.importActive then return 0 end
   if not addon.DB or not addon.DB.data then
     return 0
   end

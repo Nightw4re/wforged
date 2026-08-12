@@ -1,8 +1,8 @@
 ## Interface: 30300
 ## Title: Wforged
-## Notes: Collects Worldforged item locations, stats, and vendor upgrade data. Bundled snapshot: 982 unique items including located base items and upgrades.
+## Notes: Collects Worldforged item locations, stats, and vendor upgrade data. Bundled snapshot: 1328 unique items including located base items and upgrades.
 ## Author: lkroc
-## Version: 1.4.1
+## Version: 1.5.0
 ## SavedVariables: WforgedDB, WforgedLastImport
 
 Core.lua

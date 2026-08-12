@@ -4,6 +4,7 @@ const path = require("path");
 const repoRoot = path.resolve(__dirname, "..");
 const packageJson = require(path.join(repoRoot, "package.json"));
 const tocPath = path.join(repoRoot, "addon", "Wforged", "Wforged.toc");
+const corePath = path.join(repoRoot, "addon", "Wforged", "Core.lua");
 const version = String(packageJson.version);
 const toc = fs.readFileSync(tocPath, "utf8");
 const versionLine = `## Version: ${version}`;
@@ -22,3 +23,11 @@ if (updated !== toc) {
   fs.writeFileSync(tocPath, updated);
   console.log(`Synced TOC version to ${version}`);
 }
+
+const core = fs.readFileSync(corePath, "utf8");
+if (!/addon\.version\s*=\s*"[^"]*"/.test(core)) {
+  throw new Error(`Could not update addon runtime version in ${corePath}`);
+}
+const updatedCore = core.replace(/addon\.version\s*=\s*"[^"]*"/, `addon.version = "${version}"`);
+fs.writeFileSync(corePath, updatedCore);
+console.log(`Synced runtime version to ${version}`);

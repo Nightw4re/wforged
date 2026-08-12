@@ -417,7 +417,7 @@ registerEvent("PLAYER_LOGIN", function(self)
   self.DB:Init()
   self.Sync:Init()
   if WforgedBundledData and WforgedBundledDataVersion and self.DB.data.meta.bundledDataVersion ~= WforgedBundledDataVersion then
-    self.Sync:Import(WforgedBundledData)
+    self.Sync:Import(WforgedBundledData, { source = "bundled" })
     self.DB.data.meta.bundledDataVersion = WforgedBundledDataVersion
     self:Print("Bundled database imported.")
   end
@@ -439,7 +439,7 @@ registerEvent("PLAYER_LOGIN", function(self)
     end)
   end
   if C_Timer and C_Timer.After and self.DB and self.DB.upgradeLocationRepairQueue then
-    C_Timer.After(5, function()
+    C_Timer.After(15, function()
       self.DB.upgradeLocationRepairReady = true
       self:LootDebug("Upgrade location repair started after login delay.")
     end)

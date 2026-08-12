@@ -89,6 +89,14 @@ jobs:
           npm run check
           npm run unit
 
+      - name: Install Lua linter
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua-check
+
+      - name: Lint Lua sources
+        run: npm run lint
+
       - name: Build release archive
         run: npm run build
 

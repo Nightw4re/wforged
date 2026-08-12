@@ -100,7 +100,7 @@ local function decodePayload(fields)
     fingerprint = fingerprint ~= "" and fingerprint or string.format("id:%d", itemId or 0),
     itemId = itemId, itemName = itemName, itemLink = itemLink,
     itemTexture = itemTexture, quality = quality, itemLevel = itemLevel,
-    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = "import", mapId = mapId,
+    effectiveLevel = itemLevel, upgradeLevel = 0, sourceType = fields.importSource or "import", mapId = mapId,
     x = hasLocation and tonumber(fields[4]) or nil, y = hasLocation and tonumber(fields[5]) or nil,
     zoneName = knownZoneName or fields[8],
     upgradeCost = upgradeCost, upgradeCurrency = upgradeCurrency,
@@ -111,6 +111,7 @@ local function decodePayload(fields)
 end
 
 function Sync:RefreshItemInfo(itemId)
+  if self.importActive then return end
   itemId = tonumber(itemId)
   if not itemId or not GetItemInfo then return end
   local queryLink = string.format("|Hitem:%d:0:0:0:0:0:0:0:0|h[Item]|h", itemId)
@@ -228,6 +229,7 @@ function Sync:Import(textValue, context)
     addon:LootDebug("Legacy import format WFGDB6 detected; prefer WFGDB7 exports.")
   end
   WforgedLastImport = textValue
+  self.importActive = true
   self.pendingImports = self.pendingImports or {}
   self.pendingImportIndex = self.pendingImportIndex or 1
   local queued = 0
@@ -280,6 +282,7 @@ function Sync:Import(textValue, context)
   end)
   for _, fields in ipairs(importedRecords) do
     fields.importSource = context and context.source or "manual"
+    fields.importSender = context and context.sender or nil
     self.pendingImports[#self.pendingImports + 1] = fields
   end
   addon:LootDebug(string.format("Import scan: records=%d queued=%d firstType=%s firstId=%s", scanned, queued, tostring(firstType), tostring(firstId)))
@@ -327,7 +330,7 @@ function Sync:ProcessImportQueue(elapsed)
           end
         end
       end
-      addon:LootDebug(string.format("Import decoded: id=%s name=%s map=%s x=%s y=%s time=%s quality=%s level=%s", tostring(payload.itemId), tostring(payload.itemName), tostring(payload.mapId), tostring(payload.x), tostring(payload.y), tostring(payload.observedAt), tostring(payload.quality), tostring(payload.itemLevel)))
+      addon:LootDebug(string.format("Import decoded: sender=%s id=%s name=%s map=%s x=%s y=%s time=%s quality=%s level=%s", tostring(fields.importSender or "manual"), tostring(payload.itemId), tostring(payload.itemName), tostring(payload.mapId), tostring(payload.x), tostring(payload.y), tostring(payload.observedAt), tostring(payload.quality), tostring(payload.itemLevel)))
       self:MergeRemoteItem(payload)
       if addon.ItemScan and addon.ItemScan.FinalizePendingRecord and payload.itemLink then
         payload.pendingKey = "import:item:" .. tostring(payload.itemId)
@@ -341,6 +344,7 @@ function Sync:ProcessImportQueue(elapsed)
     local total = #self.pendingImports
     self.pendingImports = {}
     self.pendingImportIndex = 1
+    self.importActive = false
     if self.partyImportStats then
       addon:Print(string.format(
         "Party database import complete: %d new item(s), %d with location.",
@@ -348,7 +352,7 @@ function Sync:ProcessImportQueue(elapsed)
       ))
       self.partyImportStats = nil
     else
-      addon:Print("Import complete: " .. tostring(total) .. " items processed.")
+      addon:LootDebug("Import complete: " .. tostring(total) .. " items processed.")
     end
     if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
       addon.ItemScan:ResetZoneNameRepair()
@@ -524,7 +528,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
         for part = 1, share.total do parts[#parts + 1] = share.chunks[part] or "" end
         local data = table.concat(parts)
         if data:sub(1, 7) == "WFGDB8;" then
-          self:Import(data, { source = "party" })
+          self:Import(data, { source = "party", sender = sender })
         else
           addon:Print("Party database share rejected: invalid data.")
         end
@@ -587,7 +591,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
   end
 
   if message and (message:sub(1, 7) == "WFGDB7|" or message:sub(1, 7) == "WFGDB8|") then
-    self:Import(message)
+    self:Import(message, { source = channel == "WHISPER" and "collector" or "guild", sender = sender })
     addon:LootDebug("Guild payload queued as WFGDB7.")
   elseif message and message:sub(1, 5) == "WFG6|" then
     local fields = splitPayload(message)
@@ -616,7 +620,8 @@ function Sync:MergeRemoteItem(payload)
   local fingerprint = bucket and bucket.bestFingerprint or payload.fingerprint
   local existing = fingerprint and addon.DB.data.itemsByFingerprint[fingerprint] or nil
 
-  if (not existing) or (tonumber(payload.observedAt or 0) >= tonumber(existing.lastSeenAt or 0)) then
+  local bundledSource = payload.sourceType == "bundled"
+  if bundledSource or (not existing) or (tonumber(payload.observedAt or 0) >= tonumber(existing.lastSeenAt or 0)) then
     if existing then
       -- Compact sync data only owns location and timestamp; retain locally resolved item details.
       payload.itemLink = existing.itemLink
@@ -632,10 +637,10 @@ function Sync:MergeRemoteItem(payload)
     payload.itemKey = itemKey
     payload.fingerprint = fingerprint
     local stored = addon.DB:RecordItemObservation(payload)
-    if addon.ItemScan and addon.ItemScan.RepairStoredItems then
+    if not self.importActive and addon.ItemScan and addon.ItemScan.RepairStoredItems then
       addon.ItemScan:RepairStoredItems(payload.itemId)
     end
-    if addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
+    if not self.importActive and addon.ItemScan and addon.ItemScan.ResetZoneNameRepair then
       addon.ItemScan:ResetZoneNameRepair()
     end
     addon:LootDebug(string.format("Import stored: id=%s name=%s map=%s x=%s y=%s quality=%s level=%s", tostring(payload.itemId), tostring(stored and stored.itemName or payload.itemName), tostring(stored and stored.lastMapId), tostring(stored and stored.lastX), tostring(stored and stored.lastY), tostring(stored and stored.quality), tostring(stored and stored.itemLevel)))

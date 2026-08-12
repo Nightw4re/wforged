@@ -4,7 +4,7 @@ addon = addon or {}
 _G[addonName] = addon
 
 addon.name = addonName
-addon.version = "1.0.1"
+addon.version = "1.5.0"
 addon.debug = false
 addon.AutoConfirm = addon.AutoConfirm or {}
 addon.MinimapButton = addon.MinimapButton or {}
@@ -119,29 +119,44 @@ function addon:RegisterEvent(eventName, handler)
 end
 
 function addon:ResolveZoneName(mapId, continent, zone, zoneName, allowCurrentFallback)
+  self._zoneNameCache = self._zoneNameCache or {}
   local genericName = type(zoneName) == "string" and zoneName:match("^Map %d+$")
   if zoneName and zoneName ~= "" and not genericName then
     return zoneName
   end
 
+  local cacheKey = table.concat({
+    tostring(mapId or ""), tostring(continent or ""), tostring(zone or ""),
+    tostring(allowCurrentFallback == false and 0 or 1),
+  }, ":")
+  local cached = self._zoneNameCache[cacheKey]
+  if cached then
+    return cached == false and nil or cached
+  end
+
+  local function cache(value)
+    self._zoneNameCache[cacheKey] = value or false
+    return value
+  end
+
   if continent and zone and continent > 0 and zone > 0 and GetMapZones then
     local zones = { GetMapZones(continent) }
     if zones[zone] and zones[zone] ~= "" then
-      return zones[zone]
+      return cache(zones[zone])
     end
   end
 
   if mapId and GetMapNameByID then
     local resolved = GetMapNameByID(mapId)
     if resolved and resolved ~= "" then
-      return resolved
+      return cache(resolved)
     end
   end
 
   if mapId and GetMapName then
     local resolved = GetMapName(mapId)
     if resolved and resolved ~= "" and not tostring(resolved):match("^Map %d+$") then
-      return resolved
+      return cache(resolved)
     end
   end
 
@@ -157,15 +172,17 @@ function addon:ResolveZoneName(mapId, continent, zone, zoneName, allowCurrentFal
       local zones = currentContinent and { GetMapZones(currentContinent) } or nil
       local localizedName = zones and currentZone and zones[currentZone] or nil
       if localizedName and localizedName ~= "" then
-        return localizedName
+        return cache(localizedName)
       end
     end
     local currentName = GetMapInfo()
     if currentName and currentName ~= "" and not tostring(currentName):match("^Map %d+$") then
-      return currentName
+      return cache(currentName)
     end
   end
 
+  -- Do not cache misses: custom map names can become available after the
+  -- map UI loads and a cached nil would make the fallback stale.
   return nil
 end
 
@@ -310,8 +327,17 @@ local function ensureMapPin()
     end)
     WorldMapFrame:HookScript("OnUpdate", function()
       if not WorldMapDetailFrame or not WorldMapFrame:IsShown() then return end
-      if addon.ItemScan and addon.ItemScan.RepairZoneNamesFromOpenMap then
-        addon.ItemScan:RepairZoneNamesFromOpenMap()
+      -- Zone repair scans stored records. Run it once per map identity, not
+      -- on every frame while the map is open or resized.
+      if addon.ItemScan and addon.ItemScan.zoneRepairInteractive
+        and addon.ItemScan.RepairZoneNamesFromOpenMap then
+        local mapId = GetCurrentMapAreaID and GetCurrentMapAreaID() or nil
+        local mapName = GetMapInfo and GetMapInfo() or nil
+        local repairKey = tostring(mapId or "?") .. ":" .. tostring(mapName or "?")
+        if addon.MapNotes.lastOpenMapRepairKey ~= repairKey then
+          addon.MapNotes.lastOpenMapRepairKey = repairKey
+          addon.ItemScan:RepairZoneNamesFromOpenMap()
+        end
       end
       local width = WorldMapDetailFrame:GetWidth()
       local height = WorldMapDetailFrame:GetHeight()
@@ -438,15 +464,45 @@ function addon.MapNotes:EnsureAllMapCheckbox()
   return ensureAllMapCheckbox()
 end
 
-function addon.MapNotes:RefreshAllMarkers()
+function addon.MapNotes:RefreshAllMarkers(force)
+  local refreshStarted = debugprofilestop and debugprofilestop() or nil
+  -- Mapster/ElvUI can emit several size/map events during one zoom step.
+  -- Coalesce them so the expensive item search and pin layout run once.
+  if not force and C_Timer and C_Timer.After then
+    if self.markerRefreshScheduled then return end
+    self.markerRefreshScheduled = true
+    C_Timer.After(0.03, function()
+      self.markerRefreshScheduled = false
+      self:RefreshAllMarkers(true)
+    end)
+    return
+  end
   local checkbox = ensureAllMapCheckbox()
   if checkbox then checkbox:SetChecked(WforgedDB.showAllMapItems and true or false) end
   if not WforgedDB.showAllMapItems or not WorldMapFrame or not WorldMapFrame:IsShown() or not WorldMapDetailFrame then
     for _, marker in pairs(self.allMarkers) do marker:Hide() end
     return
   end
+
   local visible = {}
-  local results = addon.DB and addon.DB.SearchItems and addon.DB:SearchItems("") or {}
+  -- Reuse the normalized result set during rapid map layout events. Building
+  -- it scans the full database and must not happen on every zoom frame.
+  local now = GetTime and GetTime() or 0
+  if not self.markerResultsCache or not self.markerResultsCacheAt
+    or now - self.markerResultsCacheAt >= 1 then
+    local searchStarted = debugprofilestop and debugprofilestop() or nil
+    self.markerResultsCache = addon.DB and addon.DB.GetMapMarkerItems
+      and addon.DB:GetMapMarkerItems() or {}
+    self.markerResultsCacheAt = now
+    if searchStarted and addon.LootDebug then
+      addon:LootDebug(string.format(
+        "Map marker DB search: %d result(s) in %.1f ms.",
+        #self.markerResultsCache,
+        debugprofilestop() - searchStarted
+      ))
+    end
+  end
+  local results = self.markerResultsCache
   for _, result in ipairs(results) do
     local currentMapId = GetCurrentMapAreaID and GetCurrentMapAreaID() or nil
     local sameMapId = currentMapId and currentMapId == result.lastMapId
@@ -497,6 +553,12 @@ function addon.MapNotes:RefreshAllMarkers()
   end
   for key, marker in pairs(self.allMarkers) do
     if not visible[key] then marker:Hide() end
+  end
+  if refreshStarted and addon.LootDebug then
+    addon:LootDebug(string.format(
+      "Map marker refresh total: %.1f ms.",
+      debugprofilestop() - refreshStarted
+    ))
   end
 end
 
