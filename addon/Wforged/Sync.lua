@@ -282,6 +282,7 @@ function Sync:Import(textValue, context)
   end)
   for _, fields in ipairs(importedRecords) do
     fields.importSource = context and context.source or "manual"
+    fields.importSender = context and context.sender or nil
     self.pendingImports[#self.pendingImports + 1] = fields
   end
   addon:LootDebug(string.format("Import scan: records=%d queued=%d firstType=%s firstId=%s", scanned, queued, tostring(firstType), tostring(firstId)))
@@ -329,7 +330,7 @@ function Sync:ProcessImportQueue(elapsed)
           end
         end
       end
-      addon:LootDebug(string.format("Import decoded: id=%s name=%s map=%s x=%s y=%s time=%s quality=%s level=%s", tostring(payload.itemId), tostring(payload.itemName), tostring(payload.mapId), tostring(payload.x), tostring(payload.y), tostring(payload.observedAt), tostring(payload.quality), tostring(payload.itemLevel)))
+      addon:LootDebug(string.format("Import decoded: sender=%s id=%s name=%s map=%s x=%s y=%s time=%s quality=%s level=%s", tostring(fields.importSender or "manual"), tostring(payload.itemId), tostring(payload.itemName), tostring(payload.mapId), tostring(payload.x), tostring(payload.y), tostring(payload.observedAt), tostring(payload.quality), tostring(payload.itemLevel)))
       self:MergeRemoteItem(payload)
       if addon.ItemScan and addon.ItemScan.FinalizePendingRecord and payload.itemLink then
         payload.pendingKey = "import:item:" .. tostring(payload.itemId)
@@ -527,7 +528,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
         for part = 1, share.total do parts[#parts + 1] = share.chunks[part] or "" end
         local data = table.concat(parts)
         if data:sub(1, 7) == "WFGDB8;" then
-          self:Import(data, { source = "party" })
+          self:Import(data, { source = "party", sender = sender })
         else
           addon:Print("Party database share rejected: invalid data.")
         end
@@ -590,7 +591,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
   end
 
   if message and (message:sub(1, 7) == "WFGDB7|" or message:sub(1, 7) == "WFGDB8|") then
-    self:Import(message)
+    self:Import(message, { source = channel == "WHISPER" and "collector" or "guild", sender = sender })
     addon:LootDebug("Guild payload queued as WFGDB7.")
   elseif message and message:sub(1, 5) == "WFG6|" then
     local fields = splitPayload(message)
