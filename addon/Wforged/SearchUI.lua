@@ -711,6 +711,7 @@ local function configureRow(row)
     if button == "RightButton" then
       SearchUI.selectedUpgrades[key] = nil
       SearchUI:Refresh()
+      SearchUI:ShowRowActions(clickedRow)
     end
   end)
   row:SetScript("OnClick", function(clickedRow)
@@ -740,6 +741,7 @@ local function configureRow(row)
       if isUpgradeResult(clickedRow.result) then
         SearchUI.selectedUpgrades[selectionKey(clickedRow.result)] = true
         SearchUI:Refresh()
+        SearchUI:ShowRowActions(clickedRow)
       end
       SearchUI:SetSelectedResult(clickedRow.result)
     end
