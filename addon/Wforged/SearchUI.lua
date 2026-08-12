@@ -781,7 +781,8 @@ local function configureRow(row)
         return
       end
       if isUpgradeResult(clickedRow.result) then
-        SearchUI.selectedUpgrades[selectionKey(clickedRow.result)] = true
+        local key = selectionKey(clickedRow.result)
+        SearchUI.selectedUpgrades[key] = not SearchUI.selectedUpgrades[key] or nil
         SearchUI:Refresh()
         SearchUI:ShowRowActions(clickedRow)
       end
