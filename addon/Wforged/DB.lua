@@ -287,10 +287,8 @@ function DB:CleanupInvalidUpgradePlaceholders()
       else
         bucket.variants = keptVariants
         bucket.variantCount = keptCount
-        for _, variant in pairs(keptVariants) do
-          bucket.bestFingerprint = variant.fingerprint
-          break
-        end
+        local firstVariant = next(keptVariants)
+        bucket.bestFingerprint = firstVariant and keptVariants[firstVariant].fingerprint or nil
       end
     end
   end
@@ -1338,10 +1336,10 @@ function DB:SearchItems(query, filters)
             else
               location = self:GetBestLocationForFingerprint(fingerprint)
             end
-          local upgradeInfo = self:GetUpgradeInfo(itemKey)
+          local rowUpgradeInfo = self:GetUpgradeInfo(itemKey)
           local sourceInfo = self:GetUpgradeSourceInfo(itemKey)
           local sourceLocation, resolvedSourceItemKey = self:GetResolvedSourceLocation(itemKey)
-          local entryIsUpgrade = isUpgradeEntry(entry) or upgradeInfo ~= nil
+          local entryIsUpgrade = isUpgradeEntry(entry) or rowUpgradeInfo ~= nil
           if entryIsUpgrade and not sourceLocation then
             sourceLocation, resolvedSourceItemKey = self:GetMapLocationForItem(itemKey)
           end

@@ -97,11 +97,11 @@ function addon:DebugMapContext()
     tostring(mapId), tostring(mapName), tostring(continent), tostring(zone), tostring(x), tostring(y)
   ))
   if GetMapZones then
-    for continent = 1, 8 do
-      local zones = { GetMapZones(continent) }
-      for zone = 1, #zones do
-        if zones[zone] == "The Deadmines" then
-          self:Print(string.format("Map candidate: continent=%d zoneIndex=%d name=%s", continent, zone, zones[zone]))
+    for continentIndex = 1, 8 do
+      local zones = { GetMapZones(continentIndex) }
+      for zoneIndex = 1, #zones do
+        if zones[zoneIndex] == "The Deadmines" then
+          self:Print(string.format("Map candidate: continent=%d zoneIndex=%d name=%s", continentIndex, zoneIndex, zones[zoneIndex]))
         end
       end
     end

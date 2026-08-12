@@ -503,8 +503,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
 
   if channel == "PARTY" and message and message:sub(1, 10) == "WFGSHARE1|" then
     local shareId, senderName, targetName, index, total, checksum, chunk = message:match("^WFGSHARE1|([^|]+)|([^|]*)|([^|]+)|(%d+)|(%d+)|(%d+)|(.+)$")
-    local playerName = UnitName and UnitName("player") or ""
-    if targetName and shortName(targetName) ~= shortName(playerName) then return end
+        if targetName and shortName(targetName) ~= shortName(playerName) then return end
     if shareId and index and total and chunk and shareChecksum(chunk) == checksum then
       self.partyShares = self.partyShares or {}
       local share = self.partyShares[shareId]
@@ -541,8 +540,7 @@ function Sync:OnAddonMessage(prefix, message, channel, sender, localTest)
 
   if channel == "PARTY" and message and message:sub(1, 13) == "WFGSHARE_REQ|" then
     local requestId, senderName, targetName = message:match("^WFGSHARE_REQ|([^|]+)|([^|]+)|(.+)$")
-    local playerName = UnitName and UnitName("player") or ""
-    if requestId and targetName and targetName == playerName then
+        if requestId and targetName and targetName == playerName then
       addon:LootDebug(string.format("Party share request accepted for local player: sender=%s request=%s", tostring(sender), tostring(requestId)))
       StaticPopupDialogs.WFORGED_SHARE_CONFIRM = {
         text = string.format("%s wants to send you the Wforged database.%s", tostring(sender or "A party member"), localTest and "\n\n(TEST REQUEST)" or ""),
