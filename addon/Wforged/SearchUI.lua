@@ -443,6 +443,13 @@ local function getStatValue(result, statName)
   local text = string.lower(tostring(result.statsText or "") .. " | " .. tostring(result.tooltipText or ""))
   local escaped = statName:gsub("%W", "%%%0")
   local value = text:match("([%+%-]?%d+)[^|\n]*" .. escaped)
+  if not value then
+    local equipStat = escaped
+    if statName == "critical strike" then
+      equipStat = escaped .. " rating"
+    end
+    value = text:match(equipStat .. "[^|\n]-by%s+([%+%-]?%d+)")
+  end
   return value and tostring(tonumber(value) or value) or "-"
 end
 
@@ -510,7 +517,7 @@ local function createRow(parent, index)
   for statIndex = 1, 4 do
     local statText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     statText:SetWidth(80)
-    statText:SetJustifyH("RIGHT")
+    statText:SetJustifyH("CENTER")
     statText:Hide()
     row.statTexts[statIndex] = statText
   end
@@ -573,7 +580,11 @@ local function createTableHeader(parent, text, key, x, width)
       SearchUI.sortAscending = not SearchUI.sortAscending
     else
       SearchUI.sortKey = key
-      SearchUI.sortAscending = key ~= "quality"
+      local descendingByDefault = key == "quality"
+        or key == "level"
+        or key == "stats"
+        or key:match("^stat%d$")
+      SearchUI.sortAscending = not descendingByDefault
     end
     SearchUI.page = 1
     SearchUI:UpdateHeaderSortState()
@@ -650,13 +661,30 @@ function SearchUI:UpdateDynamicColumns(query)
   for index, header in ipairs(frame.statHeaders or {}) do
     local active = statNames[index]
     if index == 1 and #statNames > 0 then
-      local labels = {}
-      for _, statName in ipairs(statNames) do labels[#labels + 1] = getStatAbbreviation(statName) end
-      header.label = table.concat(labels, "   |   ")
+      header.label = ""
+      header:SetText("")
+      header.statLabels = header.statLabels or {}
+      for statIndex, statName in ipairs(statNames) do
+        local label = header.statLabels[statIndex]
+        if not label then
+          label = header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+          header.statLabels[statIndex] = label
+        end
+        label:ClearAllPoints()
+        label:SetPoint("LEFT", header, "LEFT", (statIndex - 1) * statWidth, 0)
+        label:SetWidth(statWidth)
+        label:SetJustifyH("CENTER")
+        label:SetText(getStatAbbreviation(statName))
+        label:SetTextColor(0.75, 0.75, 0.75, 1)
+        label:Show()
+      end
+      for statIndex = #statNames + 1, #(header.statLabels or {}) do
+        header.statLabels[statIndex]:Hide()
+      end
     else
       header.label = ""
+      for _, label in ipairs(header.statLabels or {}) do label:Hide() end
     end
-    header:SetText(header.label)
     header:SetShown(index == 1 and #statNames > 0)
     if index == 1 and #statNames > 0 then
       header:SetPoint("TOPLEFT", baseX, 0)
