@@ -1322,7 +1322,7 @@ function SearchUI:Toggle()
     editBox:SetScript("OnMouseUp", function(box, button)
       if button == "RightButton" then
         box:SetText("")
-        box:ClearFocus()
+        if box.SetFocus then box:SetFocus() end
       end
     end)
     editBox:SetScript("OnTextChanged", function(box)
