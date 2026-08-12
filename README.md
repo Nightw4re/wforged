@@ -4,7 +4,7 @@
 
 Wforged collects Worldforged item locations and item information in World of Warcraft. It works locally, supports ElvUI when installed, and can share compact item observations with guild members who also use the addon.
 
-The release currently includes a bundled snapshot of **1247 unique items including located base items and upgrades**.
+The release currently includes a bundled snapshot of **1328 unique items including located base items and upgrades**.
 
 ## Features
 
@@ -40,6 +40,18 @@ npm run bundle-data -- "C:\path\to\Wforged.lua" 1.0.2
 ```
 
 The command regenerates `addon/Wforged/BundledData.lua` and updates the documented item count.
+
+### npm scripts
+
+- `npm run check` validates addon files and basic Lua structure.
+- `npm run unit` runs the Node.js parser, import, sync, and UI-related tests.
+- `npm run lint` runs Luacheck when it is installed locally.
+- `npm run copy-local` copies `addon/Wforged` to the configured Ascension AddOns folder. Override the destination with `ASCENSION_ADDONS_DIR`.
+- `npm run bundle-data -- "C:\\path\\to\\SavedVariables\\Wforged.lua" 1.4.1` extracts the current SavedVariables database into `BundledData.lua`; the second argument is the addon version used in the snapshot.
+- `npm run build` synchronizes the package version into the TOC and creates the release ZIP.
+- `npm test` runs checks and unit tests, then deploys the addon locally.
+
+The default local SavedVariables file is usually under `WTF\\Account\\<account>\\SavedVariables\\Wforged.lua` in the game client directory. Keep SavedVariables backups outside Git.
 
 ## Using the addon
 
