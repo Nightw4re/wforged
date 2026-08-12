@@ -151,8 +151,10 @@ function DB:Init()
   if db.settings.receiveGuildUpdates == nil then db.settings.receiveGuildUpdates = true end
 
   self.data = db
+  self.upgradeInfoCache = {}
   self.resolvedSourceLocationCache = {}
   self.locationNameIndex = nil
+  self.upgradeInfoCache = {}
   local currentRealm = self:GetCurrentRealm()
   for _, entry in pairs(db.itemsByFingerprint or {}) do
     if entry and not entry.realm and entry.lastSource ~= "import" and entry.lastSource ~= "guild" then
@@ -576,6 +578,7 @@ function DB:RecordVendorUpgrade(payload)
   end
   self.resolvedSourceLocationCache = {}
   self.locationNameIndex = nil
+  self.upgradeInfoCache = {}
 
   local promoted = 0
   for _, entry in pairs(self.data.itemsByFingerprint or {}) do
@@ -658,14 +661,22 @@ function DB:GetUpgradeInfo(itemKey)
     return nil
   end
 
+  self.upgradeInfoCache = self.upgradeInfoCache or {}
+  if self.upgradeInfoCache[itemKey] ~= nil then
+    return self.upgradeInfoCache[itemKey] or nil
+  end
+
   local bucket = self.data.upgradeCostsByItem[itemKey]
   if not bucket then
     local _, entry = self:GetItemEntry(itemKey)
     if entry and entry.upgradeCost then
-      return { cost = entry.upgradeCost, currency = entry.upgradeCurrency }
+      local info = { cost = entry.upgradeCost, currency = entry.upgradeCurrency }
+      self.upgradeInfoCache[itemKey] = info
+      return info
     end
   end
   if not bucket then
+    self.upgradeInfoCache[itemKey] = false
     return nil
   end
 
@@ -680,6 +691,7 @@ function DB:GetUpgradeInfo(itemKey)
     end
   end
 
+  self.upgradeInfoCache[itemKey] = best or false
   return best
 end
 
@@ -1002,7 +1014,20 @@ function DB:GetStoredLocationName(itemId, location)
   self.locationNameIndex = self.locationNameIndex or {}
   if not self.locationNameIndex._built then
     for fingerprint, sibling in pairs(self.data.itemsByFingerprint or {}) do
-      local siblingLocation = self:GetBestLocationForFingerprint(fingerprint)
+      -- Prefer the persisted observation. Building this index must stay cheap
+      -- because SearchItems can call it while opening the search window.
+      local siblingLocation
+      if sibling and not isLocationlessSource(sibling.lastSource)
+        and sibling.lastMapId and sibling.lastX and sibling.lastY then
+        siblingLocation = {
+          mapId = sibling.lastMapId,
+          continent = sibling.lastContinent,
+          zone = sibling.lastZone,
+          zoneName = sibling.lastZoneName,
+          x = sibling.lastX,
+          y = sibling.lastY,
+        }
+      end
       local siblingName = siblingLocation and siblingLocation.zoneName
       if sibling and siblingName and siblingName ~= "" then
         local siblingKey = storedLocationKey(sibling.itemId, siblingLocation)
@@ -1185,6 +1210,9 @@ function DB:SearchItems(query, filters)
   local normalizedQuery = string.lower(strtrim(query or ""))
   filters = filters or {}
   local terms = parseSearchTerms(normalizedQuery)
+  -- Location names are only needed for text matching. Resolving them for the
+  -- complete database made opening the unfiltered list needlessly expensive.
+  local resolveLocationForSearch = #terms > 0
   for itemKey, bucket in pairs(self.data.itemsByKey) do
     local hasUpgradeInfo = self:GetUpgradeInfo(itemKey) ~= nil
     local fingerprint = self:GetPreferredFingerprint(itemKey, bucket)
@@ -1214,9 +1242,12 @@ function DB:SearchItems(query, filters)
               y = entry.lastY,
             }
           end
-          local zoneName = searchLocation and addon.ResolveZoneName and addon:ResolveZoneName(
-            searchLocation.mapId, searchLocation.continent, searchLocation.zone, searchLocation.zoneName
-          ) or (searchLocation and searchLocation.zoneName) or entry.lastZoneName
+          local zoneName = searchLocation and searchLocation.zoneName or entry.lastZoneName
+          if resolveLocationForSearch and searchLocation and addon.ResolveZoneName then
+            zoneName = addon:ResolveZoneName(
+              searchLocation.mapId, searchLocation.continent, searchLocation.zone, searchLocation.zoneName
+            ) or zoneName
+          end
       local upgradeInfo = self:GetUpgradeInfo(itemKey)
       local haystack = string.lower(table.concat({
         bucket.itemName or "",

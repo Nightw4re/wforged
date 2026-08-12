@@ -332,6 +332,9 @@ end
 
 local function findSourceResult(result)
   if not result or not addon.DB or not addon.DB.SearchItems then return nil end
+  if result._sourceResultCached then
+    return result._sourceResult
+  end
   local sourceKey = result.sourceItemKey or result.resolvedSourceItemKey
   local sourceId = result.sourceItemId
   local sourceName = result.sourceItemName or result.resolvedSourceItemName
@@ -348,13 +351,22 @@ local function findSourceResult(result)
       end
     end
   end
+  result._sourceResult = best
+  result._sourceResultCached = true
   return best
 end
 
 local function getMapResult(result)
   if not result then return nil end
+  if result._mapResultCached then
+    return result._mapResult
+  end
   local source = findSourceResult(result)
-  if source and source.lastX and source.lastY then return source end
+  if source and source.lastX and source.lastY then
+    result._mapResult = source
+    result._mapResultCached = true
+    return source
+  end
   if addon.DB and result.itemKey then
     local resolver = addon.DB.GetMapLocationForItem or addon.DB.GetResolvedSourceLocation
     local location = resolver and resolver(addon.DB, result.itemKey) or nil
@@ -367,10 +379,14 @@ local function getMapResult(result)
       resolved.lastZoneName = location.zoneName
       resolved.lastX = location.x
       resolved.lastY = location.y
+      result._mapResult = resolved
+      result._mapResultCached = true
       return resolved
     end
   end
-  return source or result
+  result._mapResult = source or result
+  result._mapResultCached = true
+  return result._mapResult
 end
 
 local function buildUpgradeShareText(result)
@@ -532,41 +548,10 @@ local function createRow(parent, index)
   row.selectionHighlight:SetPoint("BOTTOMRIGHT", -1, 0)
   row.selectionHighlight:SetTexture(0.2, 0.65, 0.25, 0.22)
   row.selectionHighlight:Hide()
-
-  row.shareButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-  row.shareButton:SetWidth(44)
-  row.shareButton:SetHeight(22)
-  row.shareButton:SetPoint("LEFT", row, "LEFT", 700, 0)
-  row.shareButton:SetFrameLevel(row:GetFrameLevel() + 2)
-  row.shareButton:SetText("Share")
-
-  row.showMapButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-  row.showMapButton:SetWidth(36)
-  row.showMapButton:SetHeight(20)
-  row.showMapButton:SetPoint("LEFT", row, "LEFT", 750, 0)
-  row.showMapButton:SetFrameLevel(row:GetFrameLevel() + 2)
-  row.showMapButton:EnableMouse(true)
-  row.showMapButton:SetText("Map")
-
-  row.findButton = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-  row.findButton:SetWidth(22)
-  row.findButton:SetHeight(22)
-  row.findButton:SetPoint("LEFT", row, "LEFT", 800, 0)
-  row.findButton:SetFrameLevel(row:GetFrameLevel() + 2)
-  row.findButton:SetText("")
-  row.findButton.icon = row.findButton:CreateTexture(nil, "ARTWORK")
-  row.findButton.icon:SetSize(14, 14)
-  row.findButton.icon:SetPoint("CENTER")
-  row.findButton.icon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
-  row.findButton:SetScript("OnEnter", function(button)
-    if not button:IsShown() or not GameTooltip then return end
-    GameTooltip:SetOwner(button, "ANCHOR_TOP")
-    GameTooltip:SetText("Find previous item")
-    GameTooltip:Show()
-  end)
-  row.findButton:SetScript("OnLeave", function()
-    if GameTooltip then GameTooltip:Hide() end
-  end)
+  row.actionHighlight = row:CreateTexture(nil, "BACKGROUND")
+  row.actionHighlight:SetAllPoints(row)
+  row.actionHighlight:SetTexture(0.25, 0.55, 0.9, 0.16)
+  row.actionHighlight:Hide()
 
   return row
 end
@@ -760,13 +745,157 @@ local function configureRow(row)
     end
   end)
   row:SetScript("OnEnter", function(hoveredRow)
-    if hoveredRow.result and hoveredRow.result.itemLink then
-      GameTooltip:SetOwner(hoveredRow, "ANCHOR_RIGHT")
-      GameTooltip:SetHyperlink(hoveredRow.result.itemLink)
-      GameTooltip:Show()
+    if SearchUI.rowActions and SearchUI.rowActions.currentRow == hoveredRow
+      and SearchUI.rowActions:IsShown() then
+      return
     end
+    SearchUI:ShowRowActions(hoveredRow)
+    SearchUI.tooltipToken = (SearchUI.tooltipToken or 0) + 1
+    local token = SearchUI.tooltipToken
+    if hoveredRow.result and hoveredRow.result.itemLink and C_Timer and C_Timer.After then
+      C_Timer.After(0.18, function()
+        if SearchUI.tooltipToken ~= token or SearchUI.hoveredRow ~= hoveredRow
+          or not hoveredRow:IsShown() or not GameTooltip then
+          return
+        end
+        GameTooltip:SetOwner(hoveredRow, "ANCHOR_RIGHT")
+        GameTooltip:SetHyperlink(hoveredRow.result.itemLink)
+        GameTooltip:Show()
+      end)
+    end
+    SearchUI.hoveredRow = hoveredRow
   end)
-  row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  row:SetScript("OnLeave", function(leavingRow)
+    SearchUI.tooltipToken = (SearchUI.tooltipToken or 0) + 1
+    if SearchUI.hoveredRow == leavingRow then SearchUI.hoveredRow = nil end
+    GameTooltip:Hide()
+    local actions = SearchUI.rowActions
+    if actions and actions:IsShown() and MouseIsOver and MouseIsOver(actions) then
+      return
+    end
+    if leavingRow.currencyButton and leavingRow.currencyButton:IsShown()
+      and MouseIsOver and MouseIsOver(leavingRow.currencyButton) then
+      return
+    end
+    SearchUI:HideRowActionsSoon()
+  end)
+end
+
+function SearchUI:CreateRowActions()
+  if self.rowActions then return self.rowActions end
+  local parent = self.frame
+  local actions = CreateFrame("Frame", nil, parent)
+  actions:SetSize(128, 24)
+  actions:SetFrameLevel(parent:GetFrameLevel() + 20)
+  actions:EnableMouse(true)
+  actions:SetScript("OnEnter", function() self.actionLeaveToken = (self.actionLeaveToken or 0) + 1 end)
+  actions:SetScript("OnLeave", function()
+    if actions.currentRow and MouseIsOver and MouseIsOver(actions.currentRow) then return end
+    self:HideRowActionsSoon()
+  end)
+  actions.share = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
+  actions.share:SetSize(44, 22)
+  actions.share:SetPoint("LEFT")
+  actions.share:SetText("Share")
+  actions.map = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
+  actions.map:SetSize(36, 20)
+  actions.map:SetPoint("LEFT", actions.share, "RIGHT", 6, 0)
+  actions.map:SetText("Map")
+  actions.find = CreateFrame("Button", nil, actions, "UIPanelButtonTemplate")
+  actions.find:SetSize(22, 22)
+  actions.find:SetPoint("LEFT", actions.map, "RIGHT", 6, 0)
+  actions.find.icon = actions.find:CreateTexture(nil, "ARTWORK")
+  actions.find.icon:SetSize(14, 14)
+  actions.find.icon:SetPoint("CENTER")
+  actions.find.icon:SetTexture("Interface\\Common\\UI-Searchbox-Icon")
+  self.rowActions = actions
+  self:ApplyElvUIRowSkin({shareButton = actions.share, showMapButton = actions.map, findButton = actions.find})
+  actions:Hide()
+  return actions
+end
+
+function SearchUI:HideRowActionsSoon()
+  local actions = self.rowActions
+  if not actions then return end
+  self.actionLeaveToken = (self.actionLeaveToken or 0) + 1
+  local token = self.actionLeaveToken
+  if C_Timer and C_Timer.After then
+    C_Timer.After(0.08, function()
+      if self.actionLeaveToken == token and self.rowActions then
+        if self.rowActions.currentRow and self.rowActions.currentRow.actionHighlight then
+          self.rowActions.currentRow.actionHighlight:Hide()
+        end
+        self.rowActions:Hide()
+        self.rowActions:SetParent(self.frame)
+        self.rowActions.currentRow = nil
+      end
+    end)
+  else
+    if actions.currentRow and actions.currentRow.actionHighlight then
+      actions.currentRow.actionHighlight:Hide()
+    end
+    actions:Hide()
+    actions:SetParent(self.frame)
+    actions.currentRow = nil
+  end
+end
+
+function SearchUI:ShowRowActions(row)
+  local result = row and row.result
+  local actions = self:CreateRowActions()
+  if not result or not actions then return end
+  local isUpgrade = isUpgradeResult(result)
+  -- Never resolve an upgrade source from the hover handler. That lookup can
+  -- scan the whole database and must only happen when an action is clicked.
+  local sourceResult = isUpgrade and result._mapResultCached and result._mapResult or nil
+  if actions.currentRow and actions.currentRow ~= row and actions.currentRow.actionHighlight then
+    actions.currentRow.actionHighlight:Hide()
+  end
+  actions.currentRow = row
+  if row.actionHighlight then row.actionHighlight:Show() end
+  actions:SetParent(row)
+  actions:ClearAllPoints()
+  actions:SetPoint("LEFT", row, "LEFT", 700, 0)
+  actions.share:Hide(); actions.map:Hide(); actions.find:Hide()
+  if isUpgrade then
+    actions.find:SetScript("OnClick", function() self:SearchForSource(result) end)
+    actions.find:Show()
+    actions.share:SetScript("OnClick", function()
+      local mapResult = getMapResult(result)
+      if not mapResult or not hasUsableLocation(mapResult) then
+        addon:Print("Location is unknown for this upgrade item.")
+        return
+      end
+      openChatWithText(buildUpgradeShareText(result))
+    end)
+    actions.map:SetScript("OnClick", function()
+      local mapResult = getMapResult(result)
+      if not mapResult or not hasUsableLocation(mapResult) then
+        addon:Print("Location is unknown for this upgrade item.")
+        return
+      end
+      if addon.MapNotes then addon.MapNotes:ShowOnMap(mapResult, true) end
+    end)
+    actions.share:Show(); actions.map:Show()
+  else
+    actions.share:SetScript("OnClick", function()
+      if not hasUsableLocation(result) then
+        addon:Print("Location is unknown for this item.")
+        return
+      end
+      openChatWithText(buildShareText(result))
+    end)
+    actions.map:SetScript("OnClick", function()
+      if not hasUsableLocation(result) then
+        addon:Print("Location is unknown for this item.")
+        return
+      end
+      if addon.MapNotes then addon.MapNotes:ShowOnMap(result, true) end
+    end)
+    actions.share:Show(); actions.map:Show()
+  end
+  self.actionLeaveToken = (self.actionLeaveToken or 0) + 1
+  actions:Show()
 end
 
 function SearchUI:EnsureRows(count)
@@ -792,10 +921,10 @@ function SearchUI:ApplyElvUIRowSkin(row)
   local E = _G.ElvUI and _G.ElvUI[1]
   local S = E and E.GetModule and E:GetModule("Skins", true)
   if not S then return end
-  if S.HandleButton then
-    S:HandleButton(row.shareButton)
-    S:HandleButton(row.showMapButton)
-    S:HandleButton(row.findButton)
+  if S.HandleButton and row then
+    if row.shareButton then S:HandleButton(row.shareButton) end
+    if row.showMapButton then S:HandleButton(row.showMapButton) end
+    if row.findButton then S:HandleButton(row.findButton) end
   end
 end
 
@@ -870,7 +999,18 @@ function SearchUI:Refresh(query)
   end
 
   local filters = self.filters or {}
-  local results = addon.DB:SearchItems(query or (self.frame and self.frame.editBox and self.frame.editBox:GetText()) or "", filters)
+  local searchText = query or (self.frame and self.frame.editBox and self.frame.editBox:GetText()) or ""
+  local filterKey = {}
+  for _, kind in ipairs({"armorType", "weaponType", "slot", "quality", "stat1", "stat2", "stat3", "stat4", "level", "variant"}) do
+    filterKey[#filterKey + 1] = kind .. "=" .. tostring(filters[kind] or "")
+  end
+  local cacheKey = tostring(searchText) .. "\31" .. table.concat(filterKey, "\31")
+  self.searchCache = self.searchCache or {}
+  local results = self.searchCache[cacheKey]
+  if not results then
+    results = addon.DB:SearchItems(searchText, filters)
+    self.searchCache[cacheKey] = results or {}
+  end
   local compactResults = {}
   for _, result in pairs(results or {}) do
     if result then compactResults[#compactResults + 1] = result end
@@ -1001,28 +1141,10 @@ function SearchUI:Refresh(query)
       local isUpgrade = result.isUpgrade == true
         or (tonumber(result.upgradeLevel or 0) or 0) > 0
         or result.upgradeCost ~= nil
-      -- Action controls are recycled between rows. Always reset their state
-      -- before showing the one valid action for the current result.
-      row.findButton:Hide()
-      row.shareButton:Hide()
-      row.showMapButton:Hide()
-      row.findButton:SetText("")
-      row.shareButton:SetText("")
-      row.showMapButton:SetText("")
-      row.findButton:SetScript("OnClick", nil)
-      row.shareButton:SetScript("OnClick", nil)
-      row.showMapButton:SetScript("OnClick", nil)
-      row.showMapButton:SetScript("OnMouseUp", nil)
       if isUpgrade then
         row.locationText:SetText(upgradeText or "unknown cost")
         row.locationText:SetJustifyH("RIGHT")
         row.locationText:SetWidth(self.frame.locationHeader:GetWidth())
-        row.shareButton:ClearAllPoints()
-        row.shareButton:SetPoint("LEFT", row, "LEFT", 700, 0)
-        row.showMapButton:ClearAllPoints()
-        row.showMapButton:SetPoint("LEFT", row, "LEFT", 750, 0)
-        row.findButton:ClearAllPoints()
-        row.findButton:SetPoint("LEFT", row, "LEFT", 800, 0)
         if result.upgradeCurrency == "rune" and GetItemIcon then
           local currencyId = 375250
           row.currencyButton.texture:SetTexture(GetItemIcon(currencyId) or "Interface\\Icons\\INV_Misc_QuestionMark")
@@ -1046,54 +1168,15 @@ function SearchUI:Refresh(query)
         end
         row.locationText:SetJustifyH("LEFT")
         row.locationText:SetWidth(self.frame.locationHeader:GetWidth())
-        row.findButton:ClearAllPoints()
-        row.findButton:SetPoint("LEFT", row, "LEFT", 800, 0)
         row.currencyButton:Hide()
       end
-      if isUpgrade then
-        row.findButton:SetScript("OnClick", function()
-          SearchUI:SearchForSource(result)
-        end)
-        row.findButton:SetText("")
-        row.findButton:Show()
-        row.shareButton:SetScript("OnClick", function()
-          openChatWithText(buildUpgradeShareText(result))
-        end)
-        row.showMapButton:SetScript("OnClick", function()
-          local source = getMapResult(result)
-          addon:LootDebug(string.format("Search map click: itemId=%s sourceId=%s mapId=%s", tostring(result.itemId or "?"), tostring(source and source.itemId or "?"), tostring(source and source.lastMapId or "?")))
-          if addon.MapNotes and source then addon.MapNotes:ShowOnMap(source, true) end
-        end)
-        row.shareButton:SetText("Share")
-        row.showMapButton:SetText("Map")
-        row.shareButton:Show()
-        row.showMapButton:Show()
-      elseif canShareLocation then
-        row.shareButton:ClearAllPoints()
-        row.shareButton:SetPoint("LEFT", row, "LEFT", 700, 0)
-        row.showMapButton:ClearAllPoints()
-        row.showMapButton:SetPoint("LEFT", row, "LEFT", 750, 0)
-        row.shareButton:SetScript("OnClick", function()
-          openChatWithText(buildShareText(result))
-        end)
-        row.showMapButton:SetScript("OnClick", function()
-          addon:LootDebug(string.format("Search map click: itemId=%s", tostring(result.itemId or "?")))
-          if addon.MapNotes then addon.MapNotes:ShowOnMap(result, true) end
-        end)
-        row.shareButton:SetText("Share")
-        row.showMapButton:SetText("Map")
-        row.shareButton:Show()
-        row.showMapButton:Show()
-      end
+      self:HideRowActionsSoon()
       row:Show()
     else
       row.result = nil
       if row.selectionHighlight then row.selectionHighlight:Hide() end
       row:SetAlpha(1)
       row.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-      row.findButton:Hide()
-      row.shareButton:Hide()
-      row.showMapButton:Hide()
       row:Hide()
     end
   end
@@ -1751,6 +1834,30 @@ function SearchUI:ToggleSettings()
   if self.frame and self.frame.settings then
     self.frame.settings:Show()
   end
+end
+
+-- Build the expensive row pool after login so the first user-open does not
+-- pay for frame creation and ElvUI skinning.
+function SearchUI:Prewarm()
+  if self.prewarmed or self.frame then
+    self.prewarmed = true
+    return
+  end
+  self.prewarming = true
+  self:Toggle()
+  if self.frame then
+    self.frame:Hide()
+  end
+  self.prewarming = nil
+  self.prewarmed = true
+end
+
+if addon.RegisterEvent and C_Timer and C_Timer.After then
+  addon:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+    C_Timer.After(5, function()
+      SearchUI:Prewarm()
+    end)
+  end)
 end
 
 function SearchUI:ApplyElvUISkin(frame)

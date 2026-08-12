@@ -119,29 +119,44 @@ function addon:RegisterEvent(eventName, handler)
 end
 
 function addon:ResolveZoneName(mapId, continent, zone, zoneName, allowCurrentFallback)
+  self._zoneNameCache = self._zoneNameCache or {}
   local genericName = type(zoneName) == "string" and zoneName:match("^Map %d+$")
   if zoneName and zoneName ~= "" and not genericName then
     return zoneName
   end
 
+  local cacheKey = table.concat({
+    tostring(mapId or ""), tostring(continent or ""), tostring(zone or ""),
+    tostring(allowCurrentFallback == false and 0 or 1),
+  }, ":")
+  local cached = self._zoneNameCache[cacheKey]
+  if cached then
+    return cached == false and nil or cached
+  end
+
+  local function cache(value)
+    self._zoneNameCache[cacheKey] = value or false
+    return value
+  end
+
   if continent and zone and continent > 0 and zone > 0 and GetMapZones then
     local zones = { GetMapZones(continent) }
     if zones[zone] and zones[zone] ~= "" then
-      return zones[zone]
+      return cache(zones[zone])
     end
   end
 
   if mapId and GetMapNameByID then
     local resolved = GetMapNameByID(mapId)
     if resolved and resolved ~= "" then
-      return resolved
+      return cache(resolved)
     end
   end
 
   if mapId and GetMapName then
     local resolved = GetMapName(mapId)
     if resolved and resolved ~= "" and not tostring(resolved):match("^Map %d+$") then
-      return resolved
+      return cache(resolved)
     end
   end
 
@@ -157,15 +172,17 @@ function addon:ResolveZoneName(mapId, continent, zone, zoneName, allowCurrentFal
       local zones = currentContinent and { GetMapZones(currentContinent) } or nil
       local localizedName = zones and currentZone and zones[currentZone] or nil
       if localizedName and localizedName ~= "" then
-        return localizedName
+        return cache(localizedName)
       end
     end
     local currentName = GetMapInfo()
     if currentName and currentName ~= "" and not tostring(currentName):match("^Map %d+$") then
-      return currentName
+      return cache(currentName)
     end
   end
 
+  -- Do not cache misses: custom map names can become available after the
+  -- map UI loads and a cached nil would make the fallback stale.
   return nil
 end
 
