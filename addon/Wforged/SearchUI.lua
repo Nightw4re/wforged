@@ -300,9 +300,22 @@ end
 local function getLocationText(result)
   if not hasUsableLocation(result) then return "-" end
   if result.zoneRepairPending then return "unknown zone" end
+  local location = {
+    mapId = result.lastMapId,
+    continent = result.lastContinent,
+    zone = result.lastZone,
+    zoneName = result.lastZoneName,
+    x = result.lastX,
+    y = result.lastY,
+  }
   local zoneName = result.zoneRepairPending and nil or (addon.ResolveZoneName and addon:ResolveZoneName(
     result.lastMapId, result.lastContinent, result.lastZone, result.lastZoneName
   ) or result.lastZoneName)
+  if (not zoneName or zoneName == "" or zoneName:match("^Map %d+$"))
+    and addon.DB and addon.DB.GetStoredLocationName then
+    local stored = addon.DB:GetStoredLocationName(result.itemId, location)
+    zoneName = stored and stored.zoneName or zoneName
+  end
   if not zoneName or zoneName == "" or zoneName:match("^Map %d+$") then
     return "unknown zone"
   end

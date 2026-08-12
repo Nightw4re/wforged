@@ -957,6 +957,38 @@ function DB:GetBestLocationForFingerprint(fingerprint)
   return nil
 end
 
+function DB:GetMapMarkerItems()
+  if not self.data then
+    return {}
+  end
+
+  local markers = {}
+  for fingerprint, entry in pairs(self.data.itemsByFingerprint or {}) do
+    if entry and entry.isWorldforged == true and not isUpgradeEntry(entry)
+      and entry.quality ~= 0 and hasBindOnPickup(entry) and entry.itemLink then
+      local location = self:GetBestLocationForFingerprint(fingerprint)
+      if location and location.mapId and location.x and location.y then
+        markers[#markers + 1] = {
+          itemKey = entry.itemKey,
+          fingerprint = fingerprint,
+          itemId = entry.itemId,
+          itemName = entry.itemName,
+          itemLink = entry.itemLink,
+          itemTexture = entry.itemTexture,
+          realm = entry.realm,
+          lastMapId = location.mapId,
+          lastContinent = location.continent,
+          lastZone = location.zone,
+          lastZoneName = location.zoneName,
+          lastX = location.x,
+          lastY = location.y,
+        }
+      end
+    end
+  end
+  return markers
+end
+
 local function storedLocationKey(itemId, location)
   if not itemId or not location or not location.mapId or not location.x or not location.y then
     return nil
